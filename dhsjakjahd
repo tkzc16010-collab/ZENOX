@@ -1,0 +1,3021 @@
+--[[
+    ZENOX CLIENT | BY TON   (v3 + Troll / Macro / Quick Buttons)
+    UI: WindUI  |  Theme: Black x Green Hacker
+    - Fullscreen loading screen
+    - Terminal-style loading screen with corner brackets
+    - Float platform + Auto Press
+    - Save / Load config, multi waypoints, freecam, HUD, crosshair, and more
+    - Troll tab, Macro recorder, floating Quick Buttons panel
+]]
+
+local ENV = (getgenv and getgenv()) or _G
+if type(ENV.ZENOX_UNLOAD) == "function" then
+    pcall(ENV.ZENOX_UNLOAD)
+    task.wait(0.4)
+end
+ENV.ZENOX_UNLOAD = nil
+ENV.ZENOX_LOADED = true
+ENV.ZENOX_VERSION = "v3"
+
+----------------------------------------------------------------
+-- Services
+----------------------------------------------------------------
+local Players         = game:GetService("Players")
+local RunService      = game:GetService("RunService")
+local UIS             = game:GetService("UserInputService")
+local TweenService    = game:GetService("TweenService")
+local Lighting        = game:GetService("Lighting")
+local TeleportService = game:GetService("TeleportService")
+local HttpService     = game:GetService("HttpService")
+local VirtualUser     = game:GetService("VirtualUser")
+local StarterGui      = game:GetService("StarterGui")
+
+local LocalPlayer = Players.LocalPlayer
+local mouse       = LocalPlayer:GetMouse()
+
+local GREEN      = Color3.fromRGB(0, 255, 65)
+local DARK_GREEN = Color3.fromRGB(0, 143, 17)
+local ACCENT     = GREEN
+
+----------------------------------------------------------------
+-- Helpers
+----------------------------------------------------------------
+local function getGui()
+    local ok, g = pcall(function()
+        return (gethui and gethui()) or game:GetService("CoreGui")
+    end)
+    if ok and g then return g end
+    return LocalPlayer:WaitForChild("PlayerGui")
+end
+
+local function getChar() return LocalPlayer.Character end
+local function getHum()
+    local c = getChar()
+    return c and c:FindFirstChildOfClass("Humanoid")
+end
+local function getRoot()
+    local c = getChar()
+    return c and c:FindFirstChild("HumanoidRootPart")
+end
+local function cam() return workspace.CurrentCamera end
+
+----------------------------------------------------------------
+-- Config storage
+----------------------------------------------------------------
+local CFG_DIR  = "ZenoxHub"
+local CFG_FILE = "ZenoxHub/config.json"
+local canFile  = (writefile and readfile and isfile) and true or false
+local Store = {settings = {}, waypoints = {}, autoload = false, theme = "Hacker Green"}
+
+local function loadStore()
+    if not canFile then return end
+    pcall(function()
+        if isfile(CFG_FILE) then
+            local d = HttpService:JSONDecode(readfile(CFG_FILE))
+            if type(d) == "table" then
+                for k, v in pairs(d) do Store[k] = v end
+            end
+        end
+    end)
+end
+
+local function saveStore()
+    if not canFile then return false end
+    local ok = pcall(function()
+        if makefolder and isfolder and not isfolder(CFG_DIR) then makefolder(CFG_DIR) end
+        writefile(CFG_FILE, HttpService:JSONEncode(Store))
+    end)
+    return ok
+end
+
+----------------------------------------------------------------
+-- LOADING SCREEN (fullscreen)
+----------------------------------------------------------------
+local WindUI
+
+local function runLoader(steps)
+    local vp = cam() and cam().ViewportSize or Vector2.new(1280, 720)
+    local OVER = 160 -- oversize so no edge/notch is ever visible
+    local t0 = os.clock()
+
+    -- hide default CoreGui bits while loading
+    local prevCore = {}
+    pcall(function()
+        for _, t in ipairs({
+            Enum.CoreGuiType.Chat, Enum.CoreGuiType.Backpack, Enum.CoreGuiType.PlayerList,
+            Enum.CoreGuiType.EmotesMenu, Enum.CoreGuiType.Health,
+        }) do
+            prevCore[t] = StarterGui:GetCoreGuiEnabled(t)
+            StarterGui:SetCoreGuiEnabled(t, false)
+        end
+    end)
+
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "ZenoxLoader"
+    gui.IgnoreGuiInset = true
+    gui.ResetOnSpawn = false
+    gui.DisplayOrder = 999
+    pcall(function() gui.ScreenInsets = Enum.ScreenInsets.None end)
+    pcall(function() gui.SafeAreaCompatibility = Enum.SafeAreaCompatibility.None end)
+    gui.Parent = getGui()
+
+    local root = Instance.new("CanvasGroup")
+    root.AnchorPoint = Vector2.new(0.5, 0.5)
+    root.Position = UDim2.fromScale(0.5, 0.5)
+    root.Size = UDim2.new(1, OVER * 2, 1, OVER * 2)
+    root.BackgroundColor3 = Color3.fromRGB(2, 6, 2)
+    root.BorderSizePixel = 0
+    root.GroupTransparency = 1
+    root.Parent = gui
+
+    TweenService:Create(root, TweenInfo.new(0.4), {GroupTransparency = 0}):Play()
+
+    local W, H = vp.X + OVER * 2, vp.Y + OVER * 2
+
+    -- Matrix rain
+    local rows, colW = 26, 18
+    local chars = "01ABCDEFGHIJKLMNOPQRSTUVWXYZ$#@%&*+=<>/\\|"
+    local function randText()
+        local t = {}
+        for i = 1, rows do
+            local r = math.random(1, #chars)
+            t[i] = chars:sub(r, r)
+        end
+        return table.concat(t, "\n")
+    end
+
+    local cols = {}
+    for i = 0, math.floor(W / colW) do
+        local l = Instance.new("TextLabel")
+        l.BackgroundTransparency = 1
+        l.Size = UDim2.fromOffset(colW, rows * 15)
+        l.Font = Enum.Font.Code
+        l.TextSize = 14
+        l.TextColor3 = GREEN
+        l.TextTransparency = 0.55 + math.random() * 0.35
+        l.Text = randText()
+        l.ZIndex = 1
+        l.Parent = root
+        cols[i + 1] = {label = l, x = i * colW, y = -math.random(0, H), speed = math.random(70, 220)}
+    end
+
+    -- scan line
+    local scan = Instance.new("Frame")
+    scan.Size = UDim2.new(1, 0, 0, 90)
+    scan.BackgroundColor3 = GREEN
+    scan.BorderSizePixel = 0
+    scan.ZIndex = 3
+    scan.Parent = root
+    local sg = Instance.new("UIGradient", scan)
+    sg.Rotation = 90
+    sg.Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 1),
+        NumberSequenceKeypoint.new(0.5, 0.88),
+        NumberSequenceKeypoint.new(1, 1),
+    })
+
+    ------------------------------------------------------------
+    -- Corner brackets + corner readouts (zoom in from screen edge)
+    ------------------------------------------------------------
+    local frameC = Instance.new("Frame")
+    frameC.AnchorPoint = Vector2.new(0.5, 0.5)
+    frameC.Position = UDim2.fromScale(0.5, 0.5)
+    frameC.Size = UDim2.new(1, -(OVER * 2 + 2), 1, -(OVER * 2 + 2))
+    frameC.BackgroundTransparency = 1
+    frameC.ZIndex = 4
+    frameC.Parent = root
+    TweenService:Create(frameC, TweenInfo.new(1.1, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+        {Size = UDim2.new(1, -(OVER * 2 + 46), 1, -(OVER * 2 + 46))}):Play()
+
+    local brackets = {}
+    local function corner(ax, ay)
+        for i = 1, 2 do
+            local f = Instance.new("Frame")
+            f.Size = (i == 1) and UDim2.fromOffset(40, 3) or UDim2.fromOffset(3, 40)
+            f.AnchorPoint = Vector2.new(ax, ay)
+            f.Position = UDim2.fromScale(ax, ay)
+            f.BackgroundColor3 = GREEN
+            f.BorderSizePixel = 0
+            f.ZIndex = 4
+            f.Parent = frameC
+            table.insert(brackets, f)
+        end
+    end
+    corner(0, 0) corner(1, 0) corner(0, 1) corner(1, 1)
+
+    local function cornerText(ax, ay, px, py, align)
+        local l = Instance.new("TextLabel")
+        l.BackgroundTransparency = 1
+        l.AnchorPoint = Vector2.new(ax, ay)
+        l.Position = UDim2.new(ax, px, ay, py)
+        l.Size = UDim2.fromOffset(260, 16)
+        l.Font = Enum.Font.Code
+        l.TextSize = 12
+        l.TextColor3 = GREEN
+        l.TextTransparency = 0.25
+        l.TextXAlignment = align
+        l.ZIndex = 4
+        l.Text = ""
+        l.Parent = frameC
+        return l
+    end
+    local tl = cornerText(0, 0, 14, 12, Enum.TextXAlignment.Left)
+    local tr = cornerText(1, 0, -14, 12, Enum.TextXAlignment.Right)
+    local bl = cornerText(0, 1, 14, -12, Enum.TextXAlignment.Left)
+    local br = cornerText(1, 1, -14, -12, Enum.TextXAlignment.Right)
+    tl.Text = "ZENOX//SYS.BOOT"
+    bl.Text = string.format("SID 0x%04X%04X", math.random(0, 0xFFFF), math.random(0, 0xFFFF))
+
+    ------------------------------------------------------------
+    -- Center panel
+    ------------------------------------------------------------
+    local panel = Instance.new("Frame")
+    panel.AnchorPoint = Vector2.new(0.5, 0.5)
+    panel.Position = UDim2.fromScale(0.5, 0.5)
+    panel.Size = UDim2.fromOffset(460, 320)
+    panel.BackgroundColor3 = Color3.fromRGB(3, 10, 3)
+    panel.BackgroundTransparency = 0.15
+    panel.BorderSizePixel = 0
+    panel.ZIndex = 5
+    panel.Parent = root
+    Instance.new("UICorner", panel).CornerRadius = UDim.new(0, 10)
+    local pStroke = Instance.new("UIStroke", panel)
+    pStroke.Color = GREEN
+    pStroke.Thickness = 1.5
+    pStroke.Transparency = 0.2
+
+    local alive = true
+    task.spawn(function()
+        while alive do
+            TweenService:Create(pStroke, TweenInfo.new(0.9, Enum.EasingStyle.Sine), {Transparency = 0.7}):Play()
+            task.wait(0.9)
+            TweenService:Create(pStroke, TweenInfo.new(0.9, Enum.EasingStyle.Sine), {Transparency = 0.1}):Play()
+            task.wait(0.9)
+        end
+    end)
+
+    local TITLE = "ZENOX HUB"
+
+    local ghost = Instance.new("TextLabel")
+    ghost.BackgroundTransparency = 1
+    ghost.AnchorPoint = Vector2.new(0.5, 0)
+    ghost.Position = UDim2.new(0.5, 0, 0, 20)
+    ghost.Size = UDim2.new(1, 0, 0, 56)
+    ghost.Font = Enum.Font.Code
+    ghost.TextSize = 46
+    ghost.Text = TITLE
+    ghost.TextColor3 = Color3.fromRGB(0, 255, 200)
+    ghost.TextTransparency = 0.6
+    ghost.ZIndex = 6
+    ghost.Parent = panel
+
+    local title = ghost:Clone()
+    title.TextColor3 = GREEN
+    title.TextTransparency = 0
+    title.ZIndex = 7
+    title.MaxVisibleGraphemes = 0
+    title.Parent = panel
+    local tStroke = Instance.new("UIStroke", title)
+    tStroke.Color = DARK_GREEN
+    tStroke.Thickness = 1
+
+    local sub = Instance.new("TextLabel")
+    sub.BackgroundTransparency = 1
+    sub.AnchorPoint = Vector2.new(0.5, 0)
+    sub.Position = UDim2.new(0.5, 0, 0, 78)
+    sub.Size = UDim2.new(1, 0, 0, 22)
+    sub.Font = Enum.Font.Code
+    sub.TextSize = 16
+    sub.Text = "B Y   T O N   |   v 3"
+    sub.TextColor3 = Color3.fromRGB(150, 255, 170)
+    sub.TextTransparency = 1
+    sub.ZIndex = 7
+    sub.Parent = panel
+
+    local status = Instance.new("TextLabel")
+    status.BackgroundTransparency = 1
+    status.Position = UDim2.new(0, 20, 0, 116)
+    status.Size = UDim2.new(1, -30, 0, 20)
+    status.Font = Enum.Font.Code
+    status.TextSize = 14
+    status.Text = "> booting..."
+    status.TextColor3 = GREEN
+    status.TextXAlignment = Enum.TextXAlignment.Left
+    status.ZIndex = 7
+    status.Parent = panel
+
+    local barBg = Instance.new("Frame")
+    barBg.AnchorPoint = Vector2.new(0.5, 0)
+    barBg.Position = UDim2.new(0.5, 0, 0, 146)
+    barBg.Size = UDim2.new(1, -40, 0, 8)
+    barBg.BackgroundColor3 = Color3.fromRGB(10, 30, 10)
+    barBg.BorderSizePixel = 0
+    barBg.ZIndex = 7
+    barBg.Parent = panel
+    Instance.new("UICorner", barBg).CornerRadius = UDim.new(1, 0)
+    local bStroke = Instance.new("UIStroke", barBg)
+    bStroke.Color = DARK_GREEN
+    bStroke.Thickness = 1
+
+    local fill = Instance.new("Frame")
+    fill.Size = UDim2.fromScale(0, 1)
+    fill.BackgroundColor3 = GREEN
+    fill.BorderSizePixel = 0
+    fill.ZIndex = 8
+    fill.Parent = barBg
+    Instance.new("UICorner", fill).CornerRadius = UDim.new(1, 0)
+    local grad = Instance.new("UIGradient", fill)
+    grad.Color = ColorSequence.new(DARK_GREEN, Color3.fromRGB(150, 255, 150))
+
+    local pct = Instance.new("TextLabel")
+    pct.BackgroundTransparency = 1
+    pct.AnchorPoint = Vector2.new(1, 0)
+    pct.Position = UDim2.new(1, -20, 0, 160)
+    pct.Size = UDim2.fromOffset(90, 20)
+    pct.Font = Enum.Font.Code
+    pct.TextSize = 14
+    pct.Text = "000%"
+    pct.TextColor3 = GREEN
+    pct.TextXAlignment = Enum.TextXAlignment.Right
+    pct.ZIndex = 7
+    pct.Parent = panel
+
+    local hexNum = Instance.new("TextLabel")
+    hexNum.BackgroundTransparency = 1
+    hexNum.Position = UDim2.new(0, 20, 0, 160)
+    hexNum.Size = UDim2.fromOffset(200, 20)
+    hexNum.Font = Enum.Font.Code
+    hexNum.TextSize = 12
+    hexNum.Text = "0x00000000"
+    hexNum.TextColor3 = Color3.fromRGB(0, 200, 120)
+    hexNum.TextTransparency = 0.2
+    hexNum.TextXAlignment = Enum.TextXAlignment.Left
+    hexNum.ZIndex = 7
+    hexNum.Parent = panel
+
+    -- terminal log
+    local sep = Instance.new("Frame")
+    sep.Position = UDim2.new(0, 20, 0, 190)
+    sep.Size = UDim2.new(1, -40, 0, 1)
+    sep.BackgroundColor3 = DARK_GREEN
+    sep.BorderSizePixel = 0
+    sep.ZIndex = 7
+    sep.Parent = panel
+
+    local logLabel = Instance.new("TextLabel")
+    logLabel.BackgroundTransparency = 1
+    logLabel.Position = UDim2.new(0, 20, 0, 198)
+    logLabel.Size = UDim2.new(1, -40, 0, 108)
+    logLabel.Font = Enum.Font.Code
+    logLabel.TextSize = 12
+    logLabel.RichText = true
+    logLabel.TextColor3 = Color3.fromRGB(120, 200, 140)
+    logLabel.TextXAlignment = Enum.TextXAlignment.Left
+    logLabel.TextYAlignment = Enum.TextYAlignment.Bottom
+    logLabel.Text = ""
+    logLabel.ZIndex = 7
+    logLabel.Parent = panel
+
+    local logLines = {}
+    local tagColor = {ok = "#00ff41", info = "#00e5ff", run = "#8aa88a", fail = "#ff4d4d"}
+    local tagText = {ok = "[ OK ]", info = "[INFO]", run = "[ .. ]", fail = "[FAIL]"}
+    local function addLog(kind, text)
+        text = tostring(text):gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;")
+        table.insert(logLines, string.format('<font color="%s">%s</font> %s', tagColor[kind], tagText[kind], text))
+        while #logLines > 7 do table.remove(logLines, 1) end
+        logLabel.Text = table.concat(logLines, "\n")
+    end
+
+    ------------------------------------------------------------
+    -- Animation loops
+    ------------------------------------------------------------
+    local statusText = "booting..."
+    local spin = {"|", "/", "-", "\\"}
+    local spinIdx, pkt, acc, tickAcc = 1, math.random(1000, 9000), 0, 0
+    local target, shown = 0, 0
+
+    local rainConn = RunService.RenderStepped:Connect(function(dt)
+        acc += dt
+        tickAcc += dt
+        for _, c in ipairs(cols) do
+            c.y += c.speed * dt
+            if c.y > H then c.y = -rows * 15 end
+            c.label.Position = UDim2.fromOffset(c.x, c.y)
+        end
+        scan.Position = UDim2.fromOffset(0, ((os.clock() * 260) % (H + 180)) - 90)
+        if acc > 0.12 then
+            acc = 0
+            for _ = 1, 6 do
+                local c = cols[math.random(1, #cols)]
+                if c then c.label.Text = randText() end
+            end
+        end
+
+        -- bracket pulse
+        local a = 0.1 + 0.4 * ((math.sin(os.clock() * 3) + 1) / 2)
+        for _, f in ipairs(brackets) do f.BackgroundTransparency = a end
+
+        -- running numbers
+        if tickAcc > 0.06 then
+            tickAcc = 0
+            pkt += math.random(1, 9)
+            tr.Text = string.format("%s   T+%05.2f", os.date("%H:%M:%S"), os.clock() - t0)
+            br.Text = string.format("PKT %06d   MEM 0x%04X%04X", pkt, math.random(0, 0xFFFF), math.random(0, 0xFFFF))
+            hexNum.Text = string.format("0x%04X%04X", math.random(0, 0xFFFF), math.random(0, 0xFFFF))
+            spinIdx = spinIdx % 4 + 1
+            status.Text = "> " .. statusText .. " " .. spin[spinIdx]
+        end
+
+        shown += (target - shown) * math.min(1, dt * 5)
+        fill.Size = UDim2.fromScale(math.clamp(shown / 100, 0, 1), 1)
+        pct.Text = string.format("%03d%%", math.floor(shown + 0.5))
+        grad.Offset = Vector2.new(math.sin(os.clock() * 2) * 0.2, 0)
+    end)
+
+    task.spawn(function()
+        while alive do
+            task.wait(0.8 + math.random() * 0.8)
+            for _ = 1, 4 do
+                if not alive then break end
+                ghost.Position = UDim2.new(0.5, math.random(-6, 6), 0, 20 + math.random(-2, 2))
+                title.TextColor3 = math.random() > 0.5 and Color3.fromRGB(180, 255, 190) or GREEN
+                task.wait(0.04)
+            end
+            ghost.Position = UDim2.new(0.5, 0, 0, 20)
+            title.TextColor3 = GREEN
+        end
+    end)
+
+    -- typewriter title
+    for i = 1, #TITLE do
+        title.MaxVisibleGraphemes = i
+        task.wait(0.07)
+    end
+    TweenService:Create(sub, TweenInfo.new(0.6), {TextTransparency = 0}):Play()
+
+    -- system info lines
+    local exec = "unknown"
+    pcall(function() exec = identifyexecutor() end)
+    addLog("info", "user: " .. LocalPlayer.Name)
+    task.wait(0.15)
+    addLog("info", "place: " .. tostring(game.PlaceId))
+    task.wait(0.15)
+    addLog("info", "executor: " .. tostring(exec))
+    task.wait(0.15)
+
+    -- run steps
+    for _, s in ipairs(steps) do
+        statusText = s.text
+        addLog("run", s.text)
+        target = s.pct
+        local ok = true
+        if s.fn then
+            local success, err = pcall(s.fn)
+            if not success then
+                ok = false
+                warn("[ZENOX] step error:", err)
+            end
+        end
+        task.wait(s.wait or 0.4)
+        addLog(ok and "ok" or "fail", s.text)
+    end
+
+    target = 100
+    statusText = "ACCESS GRANTED"
+    addLog("ok", "all modules online")
+    task.wait(0.8)
+
+    alive = false
+    TweenService:Create(root, TweenInfo.new(0.7, Enum.EasingStyle.Quad), {GroupTransparency = 1}):Play()
+    task.wait(0.75)
+    rainConn:Disconnect()
+    gui:Destroy()
+
+    pcall(function()
+        for t, v in pairs(prevCore) do StarterGui:SetCoreGuiEnabled(t, v) end
+    end)
+end
+
+runLoader({
+    {text = "initializing core modules...", pct = 10, wait = 0.4, fn = loadStore},
+    {text = "loading WindUI library...", pct = 38, wait = 0.3, fn = function()
+        WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
+    end},
+    {text = "injecting hacker theme...", pct = 55, wait = 0.4},
+    {text = "hooking player systems...", pct = 72, wait = 0.45},
+    {text = "compiling visual engine...", pct = 86, wait = 0.45},
+    {text = "building interface...", pct = 95, wait = 0.5},
+})
+
+if not WindUI then
+    warn("[ZENOX HUB] โหลด WindUI ไม่สำเร็จ (เช็คเน็ต/executor)")
+    if getgenv then getgenv().ZENOX_LOADED = nil end
+    return
+end
+
+----------------------------------------------------------------
+-- THEMES
+----------------------------------------------------------------
+local Themes = {
+    ["Hacker Green"] = {n = "ZenoxHacker", a = "#00ff41", bg = "#030803", dlg = "#070f07", btn = "#0d200d", txt = "#b6ffc8", ph = "#3a7a4a"},
+    ["Cyber Blue"]   = {n = "ZenoxCyber",  a = "#00e5ff", bg = "#030608", dlg = "#07101a", btn = "#0c1c2b", txt = "#bff6ff", ph = "#3a6b7a"},
+    ["Blood Red"]    = {n = "ZenoxBlood",  a = "#ff2a2a", bg = "#080303", dlg = "#120707", btn = "#200d0d", txt = "#ffc4c4", ph = "#7a3a3a"},
+    ["Purple Haze"]  = {n = "ZenoxPurple", a = "#b026ff", bg = "#060308", dlg = "#0e0717", btn = "#1a0d26", txt = "#ecc9ff", ph = "#5e3a7a"},
+    ["Gold Rush"]    = {n = "ZenoxGold",   a = "#ffd000", bg = "#080703", dlg = "#120f07", btn = "#20190d", txt = "#fff0b8", ph = "#7a6a3a"},
+}
+local ThemeOrder = {"Hacker Green", "Cyber Blue", "Blood Red", "Purple Haze", "Gold Rush"}
+
+for _, name in ipairs(ThemeOrder) do
+    local t = Themes[name]
+    pcall(function()
+        WindUI:AddTheme({
+            Name = t.n,
+            Accent = Color3.fromHex(t.a),
+            Dialog = Color3.fromHex(t.dlg),
+            Outline = Color3.fromHex(t.a),
+            Text = Color3.fromHex(t.txt),
+            Placeholder = Color3.fromHex(t.ph),
+            Background = Color3.fromHex(t.bg),
+            Button = Color3.fromHex(t.btn),
+            Icon = Color3.fromHex(t.a),
+        })
+    end)
+end
+
+local startTheme = Themes[Store.theme] and Store.theme or "Hacker Green"
+ACCENT = Color3.fromHex(Themes[startTheme].a)
+pcall(function() WindUI:SetTheme(Themes[startTheme].n) end)
+
+local function notify(title, content, icon)
+    pcall(function()
+        WindUI:Notify({Title = title, Content = content or "", Duration = 3, Icon = icon or "terminal"})
+    end)
+end
+
+local Window = WindUI:CreateWindow({
+    Title = "ZENOX HUB | BY TON",
+    Icon = "terminal",
+    Author = "by TON",
+    Folder = "ZenoxHub",
+    Size = UDim2.fromOffset(620, 480),
+    Theme = Themes[startTheme].n,
+    Transparent = false,
+    Resizable = true,
+    SideBarWidth = 190,
+    HasOutline = true,
+})
+
+pcall(function() Window:SetToggleKey(Enum.KeyCode.RightShift) end)
+pcall(function()
+    Window:EditOpenButton({
+        Title = "ZENOX HUB",
+        Icon = "terminal",
+        CornerRadius = UDim.new(0, 12),
+        StrokeThickness = 2,
+        Color = ColorSequence.new(GREEN, DARK_GREEN),
+        Draggable = true,
+    })
+end)
+
+----------------------------------------------------------------
+-- Control registry (for config save/load + hotkeys)
+----------------------------------------------------------------
+local Reg, Cfg = {}, {}
+
+local function Tog(tab, key, o, nosave)
+    local cb = o.Callback
+    o.Callback = function(v)
+        Cfg[key] = v
+        if cb then cb(v) end
+    end
+    o.Default = o.Default or false
+    local el = tab:Toggle(o)
+    Reg[key] = {el = el, nosave = nosave}
+    Cfg[key] = o.Default
+    return el
+end
+
+local function Sld(tab, key, o)
+    local cb = o.Callback
+    o.Callback = function(v)
+        Cfg[key] = v
+        if cb then cb(v) end
+    end
+    local el = tab:Slider(o)
+    Reg[key] = {el = el}
+    Cfg[key] = o.Value.Default
+    return el
+end
+
+local function flip(key)
+    local r = Reg[key]
+    if r then pcall(function() r.el:Set(not Cfg[key]) end) end
+end
+
+----------------------------------------------------------------
+-- STATE
+----------------------------------------------------------------
+local S = {
+    speedOn = false, speed = 50,
+    sprint = false, sprintSpeed = 90,
+    jumpOn = false, jump = 100,
+    infJump = false, bhop = false,
+    noclip = false,
+    gravityOn = false, gravity = 196.2,
+    hipOn = false, hip = 0,
+    spin = false, spinSpeed = 20,
+    antiVoid = false, antiSit = false,
+    freeze = false, hideChar = false,
+    clickTP = false, clickDelete = false,
+    fovOn = false, fov = 70,
+    fullbright = false, noFog = false, xray = false,
+    autoRejoin = false, autoClick = false, cps = 10,
+}
+local Default = {walk = 16, jump = 50, gravity = workspace.Gravity, fov = 70}
+
+----------------------------------------------------------------
+-- HUD gui (info HUD, crosshair, mobile fly buttons)
+----------------------------------------------------------------
+local HUD = Instance.new("ScreenGui")
+HUD.Name = "ZenoxHUD"
+HUD.ResetOnSpawn = false
+HUD.IgnoreGuiInset = true
+HUD.DisplayOrder = 50
+HUD.Parent = getGui()
+
+local hudLabel = Instance.new("TextLabel")
+hudLabel.Position = UDim2.fromOffset(12, 12)
+hudLabel.Size = UDim2.fromOffset(250, 76)
+hudLabel.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+hudLabel.BackgroundTransparency = 0.4
+hudLabel.Font = Enum.Font.Code
+hudLabel.TextSize = 13
+hudLabel.TextColor3 = ACCENT
+hudLabel.TextXAlignment = Enum.TextXAlignment.Left
+hudLabel.TextYAlignment = Enum.TextYAlignment.Top
+hudLabel.Visible = false
+hudLabel.Parent = HUD
+Instance.new("UICorner", hudLabel).CornerRadius = UDim.new(0, 6)
+local hudPad = Instance.new("UIPadding", hudLabel)
+hudPad.PaddingLeft = UDim.new(0, 8)
+hudPad.PaddingTop = UDim.new(0, 6)
+local hudStroke = Instance.new("UIStroke", hudLabel)
+hudStroke.Color = ACCENT
+hudStroke.Transparency = 0.4
+
+-- crosshair
+local Cross = {on = false, size = 8, gap = 4, thick = 2, color = GREEN}
+local crossFrame = Instance.new("Frame")
+crossFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+crossFrame.Position = UDim2.fromScale(0.5, 0.5)
+crossFrame.Size = UDim2.fromOffset(2, 2)
+crossFrame.BackgroundTransparency = 1
+crossFrame.Visible = false
+crossFrame.Parent = HUD
+local crossParts = {}
+for i = 1, 5 do
+    local f = Instance.new("Frame")
+    f.BorderSizePixel = 0
+    f.AnchorPoint = Vector2.new(0.5, 0.5)
+    f.Parent = crossFrame
+    crossParts[i] = f
+end
+local function drawCross()
+    local s, g, t = Cross.size, Cross.gap, Cross.thick
+    local sizes = {
+        {Vector2.new(t, s), Vector2.new(0, -(g + s / 2))},
+        {Vector2.new(t, s), Vector2.new(0, (g + s / 2))},
+        {Vector2.new(s, t), Vector2.new(-(g + s / 2), 0)},
+        {Vector2.new(s, t), Vector2.new((g + s / 2), 0)},
+        {Vector2.new(t, t), Vector2.new(0, 0)},
+    }
+    for i, f in ipairs(crossParts) do
+        f.Size = UDim2.fromOffset(sizes[i][1].X, sizes[i][1].Y)
+        f.Position = UDim2.fromOffset(sizes[i][2].X, sizes[i][2].Y)
+        f.BackgroundColor3 = Cross.color
+    end
+end
+drawCross()
+
+-- mobile fly buttons
+local flyUp, flyDown = false, false
+local function mkFlyBtn(txt, y, setter)
+    local b = Instance.new("TextButton")
+    b.AnchorPoint = Vector2.new(1, 0.5)
+    b.Position = UDim2.new(1, -20, 0.5, y)
+    b.Size = UDim2.fromOffset(58, 58)
+    b.BackgroundColor3 = Color3.fromRGB(5, 20, 5)
+    b.BackgroundTransparency = 0.25
+    b.Text = txt
+    b.Font = Enum.Font.Code
+    b.TextSize = 26
+    b.TextColor3 = GREEN
+    b.Visible = false
+    b.AutoButtonColor = true
+    b.Parent = HUD
+    Instance.new("UICorner", b).CornerRadius = UDim.new(1, 0)
+    local st = Instance.new("UIStroke", b)
+    st.Color = GREEN
+    st.Thickness = 1.5
+    b.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseButton1 then setter(true) end
+    end)
+    b.InputEnded:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseButton1 then setter(false) end
+    end)
+    return b
+end
+local btnUp   = mkFlyBtn("▲", -40, function(v) flyUp = v end)
+local btnDown = mkFlyBtn("▼", 40, function(v) flyDown = v end)
+local showFlyBtns = UIS.TouchEnabled
+
+----------------------------------------------------------------
+-- FLY
+----------------------------------------------------------------
+local Fly = {on = false, speed = 60, bv = nil, bg = nil}
+
+local function stopFly()
+    if Fly.bv then Fly.bv:Destroy() Fly.bv = nil end
+    if Fly.bg then Fly.bg:Destroy() Fly.bg = nil end
+    local hum = getHum()
+    if hum then hum.PlatformStand = false end
+    btnUp.Visible, btnDown.Visible = false, false
+end
+
+local function startFly()
+    stopFly()
+    local root, hum = getRoot(), getHum()
+    if not root or not hum then return end
+    Fly.bv = Instance.new("BodyVelocity")
+    Fly.bv.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+    Fly.bv.Velocity = Vector3.zero
+    Fly.bv.Parent = root
+    Fly.bg = Instance.new("BodyGyro")
+    Fly.bg.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
+    Fly.bg.P = 9e4
+    Fly.bg.CFrame = root.CFrame
+    Fly.bg.Parent = root
+    hum.PlatformStand = true
+    btnUp.Visible, btnDown.Visible = showFlyBtns, showFlyBtns
+end
+
+RunService.RenderStepped:Connect(function()
+    if not Fly.on or not Fly.bv then return end
+    local root, hum = getRoot(), getHum()
+    if not root or not hum then return end
+    local c = cam()
+    local rel = c.CFrame:VectorToObjectSpace(hum.MoveDirection)
+    local dir = c.CFrame.LookVector * (-rel.Z) + c.CFrame.RightVector * rel.X
+    local up = 0
+    if UIS:IsKeyDown(Enum.KeyCode.Space) or UIS:IsKeyDown(Enum.KeyCode.E) or flyUp then up += 1 end
+    if UIS:IsKeyDown(Enum.KeyCode.LeftControl) or UIS:IsKeyDown(Enum.KeyCode.Q) or flyDown then up -= 1 end
+    Fly.bv.Velocity = (dir + Vector3.new(0, up, 0)) * Fly.speed
+    Fly.bg.CFrame = c.CFrame
+end)
+
+----------------------------------------------------------------
+-- FREECAM
+----------------------------------------------------------------
+local Free = {on = false, speed = 3, pos = Vector3.zero, pitch = 0, yaw = 0, conn = nil, anch = false}
+
+local function stopFree()
+    if not Free.on then return end
+    Free.on = false
+    if Free.conn then Free.conn:Disconnect() Free.conn = nil end
+    local c = cam()
+    c.CameraType = Enum.CameraType.Custom
+    local hum = getHum()
+    if hum then c.CameraSubject = hum end
+    local root = getRoot()
+    if root then root.Anchored = Free.anch end
+end
+
+local function startFree()
+    stopFree()
+    local c = cam()
+    Free.on = true
+    Free.pos = c.CFrame.Position
+    local x, y = c.CFrame:ToOrientation()
+    Free.pitch, Free.yaw = x, y
+    local root = getRoot()
+    if root then Free.anch = root.Anchored root.Anchored = true end
+    c.CameraType = Enum.CameraType.Scriptable
+    Free.conn = RunService.RenderStepped:Connect(function(dt)
+        local cm = cam()
+        local rot = CFrame.fromOrientation(Free.pitch, Free.yaw, 0)
+        local mv = Vector3.zero
+        if UIS:IsKeyDown(Enum.KeyCode.W) then mv += Vector3.new(0, 0, -1) end
+        if UIS:IsKeyDown(Enum.KeyCode.S) then mv += Vector3.new(0, 0, 1) end
+        if UIS:IsKeyDown(Enum.KeyCode.A) then mv += Vector3.new(-1, 0, 0) end
+        if UIS:IsKeyDown(Enum.KeyCode.D) then mv += Vector3.new(1, 0, 0) end
+        if UIS:IsKeyDown(Enum.KeyCode.E) or flyUp then mv += Vector3.new(0, 1, 0) end
+        if UIS:IsKeyDown(Enum.KeyCode.Q) or flyDown then mv += Vector3.new(0, -1, 0) end
+        local hum = getHum()
+        if hum and hum.MoveDirection.Magnitude > 0 then
+            local r = cm.CFrame:VectorToObjectSpace(hum.MoveDirection)
+            mv += Vector3.new(r.X, 0, r.Z)
+        end
+        Free.pos += rot:VectorToWorldSpace(mv) * Free.speed * 20 * dt
+        cm.CFrame = CFrame.new(Free.pos) * rot
+    end)
+end
+
+UIS.InputChanged:Connect(function(input, gp)
+    if not Free.on then return end
+    local t = input.UserInputType
+    if (t == Enum.UserInputType.MouseMovement and UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton2))
+        or (t == Enum.UserInputType.Touch and not gp) then
+        Free.yaw -= input.Delta.X * 0.004
+        Free.pitch = math.clamp(Free.pitch - input.Delta.Y * 0.004, -1.5, 1.5)
+    end
+end)
+
+----------------------------------------------------------------
+-- MOVEMENT LOOPS
+----------------------------------------------------------------
+RunService.Heartbeat:Connect(function()
+    local hum, root = getHum(), getRoot()
+    if not hum then return end
+
+    if S.speedOn then hum.WalkSpeed = S.speed end
+    if S.sprint and UIS:IsKeyDown(Enum.KeyCode.LeftShift) then hum.WalkSpeed = S.sprintSpeed end
+    if S.jumpOn then
+        hum.UseJumpPower = true
+        hum.JumpPower = S.jump
+    end
+    if S.hipOn then hum.HipHeight = S.hip end
+    if S.antiSit and hum.Sit then hum.Sit = false end
+    if S.bhop and hum.MoveDirection.Magnitude > 0 and hum.FloorMaterial ~= Enum.Material.Air then
+        hum.Jump = true
+    end
+    if S.spin and root and not Fly.on then
+        root.CFrame = root.CFrame * CFrame.Angles(0, math.rad(S.spinSpeed), 0)
+    end
+    if S.freeze and root and not Free.on then root.Anchored = true end
+    if S.hideChar then
+        local c = getChar()
+        if c then
+            for _, p in ipairs(c:GetDescendants()) do
+                if p:IsA("BasePart") then p.LocalTransparencyModifier = 1 end
+            end
+        end
+    end
+end)
+
+RunService.Stepped:Connect(function()
+    if S.noclip then
+        local c = getChar()
+        if c then
+            for _, p in ipairs(c:GetDescendants()) do
+                if p:IsA("BasePart") and p.CanCollide then p.CanCollide = false end
+            end
+        end
+    end
+end)
+
+UIS.JumpRequest:Connect(function()
+    if S.infJump then
+        local hum = getHum()
+        if hum then hum:ChangeState(Enum.HumanoidStateType.Jumping) end
+    end
+end)
+
+-- Anti void
+local lastSafe
+task.spawn(function()
+    while task.wait(0.5) do
+        local root = getRoot()
+        if root and S.antiVoid then
+            if root.Position.Y > -100 then
+                lastSafe = root.CFrame
+            elseif lastSafe then
+                root.AssemblyLinearVelocity = Vector3.zero
+                root.CFrame = lastSafe + Vector3.new(0, 5, 0)
+            end
+        end
+    end
+end)
+
+-- Click TP (Ctrl+Click) / Click Delete (Alt+Click)
+local deleted = {}
+UIS.InputBegan:Connect(function(input, gp)
+    if gp then return end
+    if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+    if S.clickTP and UIS:IsKeyDown(Enum.KeyCode.LeftControl) then
+        local root = getRoot()
+        if root and mouse.Hit then
+            root.CFrame = CFrame.new(mouse.Hit.Position + Vector3.new(0, 3, 0))
+        end
+    elseif S.clickDelete and UIS:IsKeyDown(Enum.KeyCode.LeftAlt) then
+        local t = mouse.Target
+        if t and not t:IsDescendantOf(getChar() or workspace) then
+            table.insert(deleted, {part = t, parent = t.Parent})
+            t.Parent = nil
+        end
+    end
+end)
+
+LocalPlayer.CharacterAdded:Connect(function()
+    task.wait(1)
+    if Fly.on then startFly() end
+end)
+
+-- Anti AFK
+LocalPlayer.Idled:Connect(function()
+    pcall(function()
+        VirtualUser:CaptureController()
+        VirtualUser:ClickButton2(Vector2.new())
+    end)
+end)
+
+-- Auto rejoin on kick/disconnect
+task.spawn(function()
+    pcall(function()
+        local overlay = game:GetService("CoreGui"):WaitForChild("RobloxPromptGui", 10):WaitForChild("promptOverlay", 10)
+        overlay.ChildAdded:Connect(function(c)
+            if S.autoRejoin and c.Name == "ErrorPrompt" then
+                task.wait(2)
+                TeleportService:Teleport(game.PlaceId, LocalPlayer)
+            end
+        end)
+    end)
+end)
+
+----------------------------------------------------------------
+-- FLOAT (invisible platform that follows your feet)
+----------------------------------------------------------------
+local Float = {on = false, part = nil, level = 0, speed = 12, up = false, down = false}
+
+local floatPanel = Instance.new("Frame")
+floatPanel.Name = "FloatPanel"
+floatPanel.AnchorPoint = Vector2.new(0, 0.5)
+floatPanel.Position = UDim2.new(0, 16, 0.5, 0)
+floatPanel.Size = UDim2.fromOffset(78, 196)
+floatPanel.BackgroundColor3 = Color3.fromRGB(4, 14, 4)
+floatPanel.BackgroundTransparency = 0.2
+floatPanel.Visible = false
+floatPanel.Parent = HUD
+Instance.new("UICorner", floatPanel).CornerRadius = UDim.new(0, 12)
+local fpStroke = Instance.new("UIStroke", floatPanel)
+fpStroke.Color = GREEN
+fpStroke.Thickness = 1.5
+
+local fpTitle = Instance.new("TextLabel")
+fpTitle.BackgroundTransparency = 1
+fpTitle.Size = UDim2.new(1, 0, 0, 22)
+fpTitle.Position = UDim2.fromOffset(0, 4)
+fpTitle.Font = Enum.Font.Code
+fpTitle.TextSize = 13
+fpTitle.Text = "FLOAT"
+fpTitle.TextColor3 = GREEN
+fpTitle.Parent = floatPanel
+
+local fpLevel = Instance.new("TextLabel")
+fpLevel.BackgroundTransparency = 1
+fpLevel.Size = UDim2.new(1, 0, 0, 22)
+fpLevel.Position = UDim2.new(0, 0, 1, -26)
+fpLevel.Font = Enum.Font.Code
+fpLevel.TextSize = 12
+fpLevel.Text = "Y 0"
+fpLevel.TextColor3 = Color3.fromRGB(150, 255, 170)
+fpLevel.Parent = floatPanel
+
+local function mkFloatBtn(txt, y, setter)
+    local b = Instance.new("TextButton")
+    b.AnchorPoint = Vector2.new(0.5, 0)
+    b.Position = UDim2.new(0.5, 0, 0, y)
+    b.Size = UDim2.fromOffset(56, 56)
+    b.BackgroundColor3 = Color3.fromRGB(8, 28, 8)
+    b.BackgroundTransparency = 0.1
+    b.Text = txt
+    b.Font = Enum.Font.Code
+    b.TextSize = 26
+    b.TextColor3 = GREEN
+    b.AutoButtonColor = true
+    b.Parent = floatPanel
+    Instance.new("UICorner", b).CornerRadius = UDim.new(1, 0)
+    local st = Instance.new("UIStroke", b)
+    st.Color = GREEN
+    st.Thickness = 1.2
+    b.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseButton1 then setter(true) end
+    end)
+    b.InputEnded:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseButton1 then setter(false) end
+    end)
+    return b
+end
+mkFloatBtn("▲", 28, function(v) Float.up = v end)
+mkFloatBtn("▼", 90, function(v) Float.down = v end)
+
+local function feetY()
+    local c = getChar()
+    if not c then return nil end
+    local ok, cf, size = pcall(function() return c:GetBoundingBox() end)
+    if not ok then return nil end
+    return cf.Position.Y - size.Y / 2
+end
+
+local function removeFloatPart()
+    if Float.part then Float.part:Destroy() Float.part = nil end
+end
+
+local function stopFloat()
+    Float.on = false
+    removeFloatPart()
+    floatPanel.Visible = false
+    Float.up, Float.down = false, false
+end
+
+local function startFloat()
+    removeFloatPart()
+    local y = feetY()
+    if not y then return end
+    Float.on = true
+    Float.level = y
+    local p = Instance.new("Part")
+    p.Name = "ZenoxFloat"
+    p.Size = Vector3.new(8, 1, 8)
+    p.Anchored = true
+    p.CanCollide = true
+    p.CanQuery = false
+    p.CanTouch = false
+    p.CastShadow = false
+    p.Transparency = 1
+    p.Locked = true
+    p.Parent = workspace
+    Float.part = p
+    floatPanel.Visible = true
+end
+
+RunService.Heartbeat:Connect(function(dt)
+    if not Float.on or not Float.part then return end
+    local root = getRoot()
+    if not root then return end
+    local dir = 0
+    local typing = UIS:GetFocusedTextBox() ~= nil
+    local keys = not typing and not Fly.on and not Free.on
+    if Float.up or (keys and UIS:IsKeyDown(Enum.KeyCode.E)) then dir += 1 end
+    if Float.down or (keys and UIS:IsKeyDown(Enum.KeyCode.Q)) then dir -= 1 end
+    Float.level += dir * Float.speed * dt
+    Float.part.CFrame = CFrame.new(root.Position.X, Float.level - 0.5, root.Position.Z)
+    fpLevel.Text = string.format("Y %d", Float.level)
+end)
+
+LocalPlayer.CharacterAdded:Connect(function()
+    if Float.on then
+        removeFloatPart()
+        task.wait(1)
+        if Float.on then startFloat() end
+    end
+end)
+
+----------------------------------------------------------------
+-- AUTO PRESS (auto tap a key / click)
+----------------------------------------------------------------
+local VIM
+pcall(function() VIM = game:GetService("VirtualInputManager") end)
+
+local AP = {on = false, interval = 0.5, hold = 0.05, key = "E"}
+local APList = {"E", "F", "R", "Q", "Z", "X", "C", "V", "G", "T", "Space", "1", "2", "3", "4", "5", "Mouse Click"}
+local APMap = {
+    E = {Enum.KeyCode.E, 0x45}, F = {Enum.KeyCode.F, 0x46}, R = {Enum.KeyCode.R, 0x52},
+    Q = {Enum.KeyCode.Q, 0x51}, Z = {Enum.KeyCode.Z, 0x5A}, X = {Enum.KeyCode.X, 0x58},
+    C = {Enum.KeyCode.C, 0x43}, V = {Enum.KeyCode.V, 0x56}, G = {Enum.KeyCode.G, 0x47},
+    T = {Enum.KeyCode.T, 0x54}, Space = {Enum.KeyCode.Space, 0x20},
+    ["1"] = {Enum.KeyCode.One, 0x31}, ["2"] = {Enum.KeyCode.Two, 0x32},
+    ["3"] = {Enum.KeyCode.Three, 0x33}, ["4"] = {Enum.KeyCode.Four, 0x34},
+    ["5"] = {Enum.KeyCode.Five, 0x35},
+}
+
+local function autoPressOnce()
+    if AP.key == "Mouse Click" then
+        local ok = false
+        if VIM then
+            ok = pcall(function()
+                local v = cam().ViewportSize
+                VIM:SendMouseButtonEvent(v.X / 2, v.Y / 2, 0, true, game, 0)
+                task.wait(0.02)
+                VIM:SendMouseButtonEvent(v.X / 2, v.Y / 2, 0, false, game, 0)
+            end)
+        end
+        if not ok and typeof(mouse1click) == "function" then pcall(mouse1click) end
+        return
+    end
+    local e = APMap[AP.key]
+    if not e then return end
+    local ok = false
+    if VIM then
+        ok = pcall(function()
+            VIM:SendKeyEvent(true, e[1], false, game)
+            task.wait(AP.hold)
+            VIM:SendKeyEvent(false, e[1], false, game)
+        end)
+    end
+    if not ok and typeof(keypress) == "function" and typeof(keyrelease) == "function" then
+        pcall(function()
+            keypress(e[2])
+            task.wait(AP.hold)
+            keyrelease(e[2])
+        end)
+    end
+end
+
+task.spawn(function()
+    while true do
+        task.wait(math.max(0.03, AP.interval))
+        if AP.on then autoPressOnce() end
+    end
+end)
+
+-- Auto clicker
+local hasClick = typeof(mouse1click) == "function"
+task.spawn(function()
+    while true do
+        task.wait(1 / math.max(1, S.cps))
+        if S.autoClick and hasClick then pcall(mouse1click) end
+    end
+end)
+
+----------------------------------------------------------------
+-- ESP
+----------------------------------------------------------------
+local ESP = {
+    on = false, name = true, dist = true, health = true, tool = false,
+    teamCheck = false, teamColor = false, rainbow = false,
+    tracer = false, box = false,
+    maxDist = 5000, fill = 0.75,
+    color = GREEN,
+}
+local espFolder = Instance.new("Folder")
+espFolder.Name = "ZenoxESP"
+espFolder.Parent = getGui()
+local espObjs = {}
+local hasDrawing = (typeof(Drawing) == "table" or typeof(Drawing) == "userdata")
+
+local function makeESP(plr)
+    if espObjs[plr] then return end
+    local o = {}
+    o.hl = Instance.new("Highlight")
+    o.hl.OutlineTransparency = 0
+    o.hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    o.hl.Parent = espFolder
+
+    o.bb = Instance.new("BillboardGui")
+    o.bb.Size = UDim2.fromOffset(220, 50)
+    o.bb.StudsOffset = Vector3.new(0, 3.2, 0)
+    o.bb.AlwaysOnTop = true
+    o.bb.Parent = espFolder
+    o.txt = Instance.new("TextLabel")
+    o.txt.BackgroundTransparency = 1
+    o.txt.Size = UDim2.fromScale(1, 1)
+    o.txt.Font = Enum.Font.Code
+    o.txt.TextSize = 13
+    o.txt.TextStrokeTransparency = 0
+    o.txt.TextColor3 = Color3.new(1, 1, 1)
+    o.txt.Parent = o.bb
+
+    if hasDrawing then
+        pcall(function()
+            local l = Drawing.new("Line")
+            l.Thickness = 1.2
+            l.Visible = false
+            o.line = l
+            local b = Drawing.new("Square")
+            b.Thickness = 1.2
+            b.Filled = false
+            b.Visible = false
+            o.box = b
+        end)
+    end
+    espObjs[plr] = o
+end
+
+local function removeESP(plr)
+    local o = espObjs[plr]
+    if not o then return end
+    pcall(function() o.hl:Destroy() end)
+    pcall(function() o.bb:Destroy() end)
+    if o.line then pcall(function() o.line:Remove() end) end
+    if o.box then pcall(function() o.box:Remove() end) end
+    espObjs[plr] = nil
+end
+Players.PlayerRemoving:Connect(removeESP)
+
+RunService.RenderStepped:Connect(function()
+    local c = cam()
+    local myRoot = getRoot()
+    local rainbow = Color3.fromHSV((tick() % 5) / 5, 1, 1)
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer then
+            makeESP(plr)
+            local o = espObjs[plr]
+            local char = plr.Character
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            local root = char and char:FindFirstChild("HumanoidRootPart")
+            local head = char and char:FindFirstChild("Head")
+            local show = ESP.on and hum and root and head and hum.Health > 0
+            local d = (myRoot and root) and (myRoot.Position - root.Position).Magnitude or 0
+            if show and ESP.teamCheck and plr.Team ~= nil and plr.Team == LocalPlayer.Team then show = false end
+            if show and d > ESP.maxDist then show = false end
+
+            if show then
+                local col = ESP.color
+                if ESP.teamColor and plr.Team then col = plr.TeamColor.Color end
+                if ESP.rainbow then col = rainbow end
+
+                o.hl.Adornee = char
+                o.hl.FillColor = col
+                o.hl.OutlineColor = col
+                o.hl.FillTransparency = ESP.fill
+                o.hl.Enabled = true
+                o.bb.Adornee = head
+                o.bb.Enabled = true
+
+                local parts = {}
+                if ESP.name then table.insert(parts, plr.DisplayName) end
+                if ESP.dist and myRoot then table.insert(parts, string.format("[%dm]", d)) end
+                if ESP.health then table.insert(parts, string.format("HP %d", hum.Health)) end
+                if ESP.tool then
+                    local tool = char:FindFirstChildOfClass("Tool")
+                    if tool then table.insert(parts, "<" .. tool.Name .. ">") end
+                end
+                o.txt.Text = table.concat(parts, " ")
+                o.txt.TextColor3 = col
+
+                local v, onScreen = c:WorldToViewportPoint(root.Position)
+                if o.line then
+                    if ESP.tracer and onScreen then
+                        local vp = c.ViewportSize
+                        o.line.From = Vector2.new(vp.X / 2, vp.Y)
+                        o.line.To = Vector2.new(v.X, v.Y)
+                        o.line.Color = col
+                        o.line.Visible = true
+                    else
+                        o.line.Visible = false
+                    end
+                end
+                if o.box then
+                    if ESP.box then
+                        local top, on1 = c:WorldToViewportPoint(head.Position + Vector3.new(0, 0.7, 0))
+                        local bot, on2 = c:WorldToViewportPoint(root.Position - Vector3.new(0, 3, 0))
+                        if on1 and on2 then
+                            local h = math.abs(bot.Y - top.Y)
+                            local w = h * 0.55
+                            o.box.Size = Vector2.new(w, h)
+                            o.box.Position = Vector2.new(top.X - w / 2, top.Y)
+                            o.box.Color = col
+                            o.box.Visible = true
+                        else
+                            o.box.Visible = false
+                        end
+                    else
+                        o.box.Visible = false
+                    end
+                end
+            else
+                o.hl.Enabled = false
+                o.hl.Adornee = nil
+                o.bb.Enabled = false
+                if o.line then o.line.Visible = false end
+                if o.box then o.box.Visible = false end
+            end
+        end
+    end
+end)
+
+----------------------------------------------------------------
+-- VISUALS / EFFECTS
+----------------------------------------------------------------
+local origLight = {
+    Brightness = Lighting.Brightness, ClockTime = Lighting.ClockTime,
+    FogEnd = Lighting.FogEnd, FogStart = Lighting.FogStart,
+    GlobalShadows = Lighting.GlobalShadows,
+    Ambient = Lighting.Ambient, OutdoorAmbient = Lighting.OutdoorAmbient,
+}
+
+local function mkEffect(class, name)
+    local e = Instance.new(class)
+    e.Name = name
+    e.Enabled = false
+    e.Parent = Lighting
+    return e
+end
+local fxCC    = mkEffect("ColorCorrectionEffect", "ZenoxCC")
+local fxNV    = mkEffect("ColorCorrectionEffect", "ZenoxNV")
+fxNV.TintColor = Color3.fromRGB(150, 255, 150)
+fxNV.Brightness = 0.15
+fxNV.Contrast = 0.25
+fxNV.Saturation = -0.3
+local fxBloom = mkEffect("BloomEffect", "ZenoxBloom")
+local fxBlur  = mkEffect("BlurEffect", "ZenoxBlur")
+fxBlur.Size = 0
+local fxRays  = mkEffect("SunRaysEffect", "ZenoxRays")
+
+RunService.RenderStepped:Connect(function()
+    if S.fullbright then
+        Lighting.Brightness = 2
+        Lighting.ClockTime = 14
+        Lighting.GlobalShadows = false
+        Lighting.Ambient = Color3.fromRGB(178, 178, 178)
+        Lighting.OutdoorAmbient = Color3.fromRGB(178, 178, 178)
+    end
+    if S.noFog then
+        Lighting.FogEnd = 1e6
+        Lighting.FogStart = 1e6
+    end
+    if S.fovOn then cam().FieldOfView = S.fov end
+end)
+
+local xrayParts = {}
+local function setXray(state)
+    if state then
+        for _, p in ipairs(workspace:GetDescendants()) do
+            if p:IsA("BasePart") and not p:IsDescendantOf(LocalPlayer.Character or workspace) then
+                local m = p:FindFirstAncestorOfClass("Model")
+                if not (m and Players:GetPlayerFromCharacter(m)) and p.Transparency < 0.6 then
+                    xrayParts[p] = true
+                    p.LocalTransparencyModifier = 0.6
+                end
+            end
+        end
+    else
+        for p in pairs(xrayParts) do
+            if p and p.Parent then p.LocalTransparencyModifier = 0 end
+        end
+        xrayParts = {}
+    end
+end
+
+----------------------------------------------------------------
+-- THEME ACCENT
+----------------------------------------------------------------
+local function applyAccent(col)
+    ACCENT = col
+    hudLabel.TextColor3 = col
+    hudStroke.Color = col
+end
+
+----------------------------------------------------------------
+-- TELEPORT / UTILITY DATA
+----------------------------------------------------------------
+local selectedPlayer
+local savedCF
+local spectating = false
+local specIdx = 0
+local tpX, tpY, tpZ = 0, 0, 0
+
+local function playerNames()
+    local t = {}
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer then table.insert(t, p.Name) end
+    end
+    if #t == 0 then t = {"(no players)"} end
+    return t
+end
+
+local function otherPlayers()
+    local t = {}
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer then table.insert(t, p) end
+    end
+    return t
+end
+
+local function spectate(plr)
+    local ch = plr and plr.Character
+    local h = ch and ch:FindFirstChildOfClass("Humanoid")
+    if h then
+        cam().CameraSubject = h
+        spectating = true
+        return true
+    end
+    return false
+end
+
+local function stopSpectate()
+    spectating = false
+    local h = getHum()
+    if h then cam().CameraSubject = h end
+end
+
+local function serverHop()
+    local ok, res = pcall(function()
+        return HttpService:JSONDecode(game:HttpGet(
+            "https://games.roblox.com/v1/games/" .. game.PlaceId ..
+            "/servers/Public?sortOrder=Asc&limit=100"))
+    end)
+    if ok and res and res.data then
+        for _, s in ipairs(res.data) do
+            if s.playing < s.maxPlayers and s.id ~= game.JobId then
+                TeleportService:TeleportToPlaceInstance(game.PlaceId, s.id, LocalPlayer)
+                return
+            end
+        end
+    end
+    notify("Server Hop", "หาเซิร์ฟใหม่ไม่ได้", "x")
+end
+
+-- Waypoints (saved per place)
+local placeKey = tostring(game.PlaceId)
+Store.waypoints[placeKey] = Store.waypoints[placeKey] or {}
+local WP = Store.waypoints[placeKey]
+local wpName, wpSelected = "", nil
+
+local function wpNames()
+    local t = {}
+    for _, w in ipairs(WP) do table.insert(t, w.name) end
+    if #t == 0 then t = {"(empty)"} end
+    return t
+end
+
+----------------------------------------------------------------
+-- UI : TABS
+----------------------------------------------------------------
+local TabInfo   = Window:Tab({Title = "Info", Icon = "info"})
+Window:Divider()
+local TabPlayer = Window:Tab({Title = "Player", Icon = "user"})
+local TabMove   = Window:Tab({Title = "Movement", Icon = "zap"})
+local TabCam    = Window:Tab({Title = "Camera", Icon = "camera"})
+local TabESP    = Window:Tab({Title = "ESP", Icon = "eye"})
+local TabVisual = Window:Tab({Title = "Visual", Icon = "sun"})
+local TabTP     = Window:Tab({Title = "Teleport", Icon = "map-pin"})
+local TabTroll  = Window:Tab({Title = "Troll", Icon = "ghost"})
+local TabMacro  = Window:Tab({Title = "Macro", Icon = "circle-dot"})
+Window:Divider()
+local TabMisc   = Window:Tab({Title = "Misc", Icon = "wrench"})
+local TabKeys   = Window:Tab({Title = "Hotkeys", Icon = "keyboard"})
+local TabSet    = Window:Tab({Title = "Settings", Icon = "settings"})
+
+---------------- INFO ----------------
+local infoPara
+pcall(function()
+    infoPara = TabInfo:Paragraph({Title = "> SYSTEM STATUS", Desc = "loading..."})
+end)
+TabInfo:Paragraph({
+    Title = "> ZENOX HUB | BY TON",
+    Desc = "Client Utility Hub v3\nกด Right Shift เพื่อซ่อน/แสดงเมนู",
+})
+
+local frames, fpsNow = 0, 0
+RunService.RenderStepped:Connect(function() frames += 1 end)
+task.spawn(function()
+    local acc = 0
+    while task.wait(0.5) do
+        acc += 0.5
+        fpsNow = frames * 2
+        frames = 0
+
+        local ping = 0
+        pcall(function() ping = math.floor(LocalPlayer:GetNetworkPing() * 1000) end)
+        local root = getRoot()
+        local p = root and root.Position or Vector3.zero
+
+        if hudLabel.Visible then
+            hudLabel.Text = string.format(
+                "ZENOX HUB | BY TON\nFPS %d  |  PING %dms\nXYZ %d  %d  %d\n%s",
+                fpsNow, ping, p.X, p.Y, p.Z, os.date("%H:%M:%S"))
+        end
+
+        if acc >= 1 then
+            acc = 0
+            if infoPara then
+                local gameName = "?"
+                pcall(function()
+                    gameName = game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId).Name
+                end)
+                pcall(function()
+                    infoPara:SetDesc(string.format(
+                        "User: %s (@%s)\nGame: %s\nPlayers: %d\nFPS: %d  |  Ping: %d ms\nPos: %d, %d, %d",
+                        LocalPlayer.DisplayName, LocalPlayer.Name, gameName,
+                        #Players:GetPlayers(), fpsNow, ping, p.X, p.Y, p.Z))
+                end)
+            end
+        end
+    end
+end)
+
+---------------- PLAYER ----------------
+TabPlayer:Section({Title = "Speed / Jump"})
+Tog(TabPlayer, "speedOn", {
+    Title = "WalkSpeed", Desc = "เปิดใช้ความเร็วเดิน",
+    Callback = function(v)
+        S.speedOn = v
+        if not v then local h = getHum() if h then h.WalkSpeed = Default.walk end end
+    end,
+})
+Sld(TabPlayer, "speed", {
+    Title = "Speed Value", Value = {Min = 16, Max = 300, Default = 50}, Step = 1,
+    Callback = function(v) S.speed = v end,
+})
+Tog(TabPlayer, "sprint", {
+    Title = "Sprint (Hold Shift)", Desc = "กด Shift ค้างเพื่อวิ่งเร็ว",
+    Callback = function(v) S.sprint = v end,
+})
+Sld(TabPlayer, "sprintSpeed", {
+    Title = "Sprint Speed", Value = {Min = 20, Max = 300, Default = 90}, Step = 1,
+    Callback = function(v) S.sprintSpeed = v end,
+})
+Tog(TabPlayer, "jumpOn", {
+    Title = "JumpPower", Desc = "เปิดใช้แรงกระโดด",
+    Callback = function(v)
+        S.jumpOn = v
+        if not v then local h = getHum() if h then h.JumpPower = Default.jump end end
+    end,
+})
+Sld(TabPlayer, "jump", {
+    Title = "Jump Value", Value = {Min = 50, Max = 400, Default = 100}, Step = 1,
+    Callback = function(v) S.jump = v end,
+})
+Tog(TabPlayer, "infJump", {
+    Title = "Infinite Jump", Desc = "กระโดดกลางอากาศไม่จำกัด",
+    Callback = function(v) S.infJump = v end,
+})
+Tog(TabPlayer, "bhop", {
+    Title = "Bunny Hop", Desc = "กระโดดอัตโนมัติตอนเดิน",
+    Callback = function(v) S.bhop = v end,
+})
+
+TabPlayer:Section({Title = "World Physics"})
+Tog(TabPlayer, "gravityOn", {
+    Title = "Custom Gravity",
+    Callback = function(v)
+        S.gravityOn = v
+        workspace.Gravity = v and S.gravity or Default.gravity
+    end,
+})
+Sld(TabPlayer, "gravity", {
+    Title = "Gravity", Value = {Min = 0, Max = 300, Default = 196}, Step = 1,
+    Callback = function(v)
+        S.gravity = v
+        if S.gravityOn then workspace.Gravity = v end
+    end,
+})
+Tog(TabPlayer, "hipOn", {
+    Title = "Custom HipHeight",
+    Callback = function(v)
+        S.hipOn = v
+        if not v then local h = getHum() if h then h.HipHeight = 0 end end
+    end,
+})
+Sld(TabPlayer, "hip", {
+    Title = "HipHeight", Value = {Min = 0, Max = 30, Default = 0}, Step = 1,
+    Callback = function(v) S.hip = v end,
+})
+
+TabPlayer:Section({Title = "Character"})
+Tog(TabPlayer, "spin", {
+    Title = "Spin", Desc = "หมุนตัว",
+    Callback = function(v) S.spin = v end,
+})
+Sld(TabPlayer, "spinSpeed", {
+    Title = "Spin Speed", Value = {Min = 1, Max = 60, Default = 20}, Step = 1,
+    Callback = function(v) S.spinSpeed = v end,
+})
+Tog(TabPlayer, "antiSit", {
+    Title = "Anti Sit", Desc = "ไม่ให้นั่งเก้าอี้/ที่นั่งเอง",
+    Callback = function(v) S.antiSit = v end,
+})
+Tog(TabPlayer, "freeze", {
+    Title = "Freeze Character", Desc = "ล็อกตัวละครอยู่กับที่",
+    Callback = function(v)
+        S.freeze = v
+        if not v then local r = getRoot() if r then r.Anchored = false end end
+    end,
+}, true)
+Tog(TabPlayer, "hideChar", {
+    Title = "Hide My Character", Desc = "ซ่อนตัวละครตัวเอง (เห็นแค่ฝั่งเรา)",
+    Callback = function(v)
+        S.hideChar = v
+        if not v then
+            local c = getChar()
+            if c then
+                for _, p in ipairs(c:GetDescendants()) do
+                    if p:IsA("BasePart") then p.LocalTransparencyModifier = 0 end
+                end
+            end
+        end
+    end,
+}, true)
+TabPlayer:Button({
+    Title = "Sit", Desc = "นั่งลง",
+    Callback = function() local h = getHum() if h then h.Sit = true end end,
+})
+TabPlayer:Button({
+    Title = "Reset Character", Desc = "รีเซ็ตตัวละคร",
+    Callback = function() local h = getHum() if h then h.Health = 0 end end,
+})
+TabPlayer:Button({
+    Title = "Reset Player Settings", Desc = "คืนค่าเดิมทั้งหมด",
+    Callback = function()
+        local h = getHum()
+        if h then h.WalkSpeed = Default.walk h.JumpPower = Default.jump h.HipHeight = 0 end
+        workspace.Gravity = Default.gravity
+        notify("Reset", "คืนค่าเรียบร้อย", "check")
+    end,
+})
+
+---------------- MOVEMENT ----------------
+TabMove:Section({Title = "Fly"})
+Tog(TabMove, "fly", {
+    Title = "Fly", Desc = "บิน (WASD/จอยสติ๊ก + Space/E ขึ้น, Ctrl/Q ลง)",
+    Callback = function(v)
+        Fly.on = v
+        if v then startFly() else stopFly() end
+    end,
+}, true)
+Sld(TabMove, "flySpeed", {
+    Title = "Fly Speed", Value = {Min = 10, Max = 300, Default = 60}, Step = 1,
+    Callback = function(v) Fly.speed = v end,
+})
+Tog(TabMove, "flyBtns", {
+    Title = "Fly Buttons (Mobile)", Desc = "ปุ่ม ▲▼ บนจอสำหรับมือถือ", Default = UIS.TouchEnabled,
+    Callback = function(v)
+        showFlyBtns = v
+        if Fly.on then btnUp.Visible, btnDown.Visible = v, v end
+    end,
+})
+
+TabMove:Section({Title = "Float"})
+Tog(TabMove, "float", {
+    Title = "Float", Desc = "แผ่นล่องหนใต้เท้า ตามตัวตลอด เปิดแล้วมีปุ่ม ▲▼ ปรับระดับ (PC: E ขึ้น / Q ลง)",
+    Callback = function(v)
+        if v then startFloat() else stopFloat() end
+    end,
+}, true)
+Sld(TabMove, "floatSpeed", {
+    Title = "Float Speed", Value = {Min = 2, Max = 60, Default = 12}, Step = 1,
+    Callback = function(v) Float.speed = v end,
+})
+TabMove:Button({
+    Title = "Reset Float Level", Desc = "ตั้งระดับแผ่นใหม่ให้ตรงกับเท้าตอนนี้",
+    Callback = function()
+        local y = feetY()
+        if y and Float.on then Float.level = y end
+    end,
+})
+
+TabMove:Section({Title = "Collision / Safety"})
+Tog(TabMove, "noclip", {
+    Title = "Noclip", Desc = "ทะลุกำแพง",
+    Callback = function(v) S.noclip = v end,
+})
+Tog(TabMove, "clickTP", {
+    Title = "Click TP", Desc = "กด Ctrl + คลิกเพื่อวาร์ปไปจุดที่คลิก",
+    Callback = function(v) S.clickTP = v end,
+})
+Tog(TabMove, "antiVoid", {
+    Title = "Anti Void", Desc = "ตกแมพแล้วดึงกลับจุดปลอดภัย",
+    Callback = function(v) S.antiVoid = v end,
+})
+
+---------------- CAMERA ----------------
+TabCam:Section({Title = "Freecam"})
+Tog(TabCam, "freecam", {
+    Title = "Freecam", Desc = "ลอยกล้องอิสระ (WASD/E/Q, คลิกขวาลากหมุน / มือถือลากนิ้ว)",
+    Callback = function(v)
+        if v then startFree() else stopFree() end
+    end,
+}, true)
+Sld(TabCam, "freeSpeed", {
+    Title = "Freecam Speed", Value = {Min = 1, Max = 15, Default = 3}, Step = 1,
+    Callback = function(v) Free.speed = v end,
+})
+
+TabCam:Section({Title = "View"})
+Tog(TabCam, "fovOn", {
+    Title = "Custom FOV",
+    Callback = function(v)
+        S.fovOn = v
+        if not v then cam().FieldOfView = Default.fov end
+    end,
+})
+Sld(TabCam, "fov", {
+    Title = "FOV", Value = {Min = 40, Max = 120, Default = 70}, Step = 1,
+    Callback = function(v) S.fov = v end,
+})
+Sld(TabCam, "zoom", {
+    Title = "Max Zoom Distance", Value = {Min = 10, Max = 5000, Default = 128}, Step = 10,
+    Callback = function(v) LocalPlayer.CameraMaxZoomDistance = v end,
+})
+Tog(TabCam, "firstPerson", {
+    Title = "Force First Person",
+    Callback = function(v)
+        LocalPlayer.CameraMode = v and Enum.CameraMode.LockFirstPerson or Enum.CameraMode.Classic
+    end,
+})
+Tog(TabCam, "shiftLock", {
+    Title = "Enable Shift Lock", Desc = "เปิดใช้ Shift Lock ในเกมที่ปิดไว้",
+    Callback = function(v)
+        pcall(function() LocalPlayer.DevEnableMouseLock = v end)
+    end,
+})
+
+TabCam:Section({Title = "Crosshair"})
+Tog(TabCam, "crossOn", {
+    Title = "Crosshair", Desc = "จุดเล็งกลางจอ",
+    Callback = function(v) crossFrame.Visible = v end,
+})
+Sld(TabCam, "crossSize", {
+    Title = "Crosshair Size", Value = {Min = 2, Max = 40, Default = 8}, Step = 1,
+    Callback = function(v) Cross.size = v drawCross() end,
+})
+Sld(TabCam, "crossGap", {
+    Title = "Crosshair Gap", Value = {Min = 0, Max = 30, Default = 4}, Step = 1,
+    Callback = function(v) Cross.gap = v drawCross() end,
+})
+TabCam:Colorpicker({
+    Title = "Crosshair Color", Default = GREEN,
+    Callback = function(c) Cross.color = c drawCross() end,
+})
+
+---------------- ESP ----------------
+TabESP:Section({Title = "Player ESP"})
+Tog(TabESP, "esp", {
+    Title = "Enable ESP", Desc = "มองเห็นผู้เล่นทะลุกำแพง (Highlight)",
+    Callback = function(v) ESP.on = v end,
+})
+Tog(TabESP, "espName", {
+    Title = "Show Name", Default = true,
+    Callback = function(v) ESP.name = v end,
+})
+Tog(TabESP, "espDist", {
+    Title = "Show Distance", Default = true,
+    Callback = function(v) ESP.dist = v end,
+})
+Tog(TabESP, "espHealth", {
+    Title = "Show Health", Default = true,
+    Callback = function(v) ESP.health = v end,
+})
+Tog(TabESP, "espTool", {
+    Title = "Show Held Tool", Desc = "แสดงชื่อไอเทมที่ถืออยู่",
+    Callback = function(v) ESP.tool = v end,
+})
+Tog(TabESP, "espTeam", {
+    Title = "Team Check", Desc = "ซ่อนเพื่อนร่วมทีม",
+    Callback = function(v) ESP.teamCheck = v end,
+})
+Tog(TabESP, "espTeamColor", {
+    Title = "Use Team Color",
+    Callback = function(v) ESP.teamColor = v end,
+})
+Tog(TabESP, "espRainbow", {
+    Title = "Rainbow ESP",
+    Callback = function(v) ESP.rainbow = v end,
+})
+if hasDrawing then
+    Tog(TabESP, "espBox", {
+        Title = "Box ESP", Desc = "กรอบสี่เหลี่ยมรอบผู้เล่น",
+        Callback = function(v) ESP.box = v end,
+    })
+    Tog(TabESP, "espTracer", {
+        Title = "Tracers", Desc = "เส้นชี้ไปหาผู้เล่น",
+        Callback = function(v) ESP.tracer = v end,
+    })
+end
+Sld(TabESP, "espMax", {
+    Title = "Max Distance", Value = {Min = 50, Max = 5000, Default = 5000}, Step = 50,
+    Callback = function(v) ESP.maxDist = v end,
+})
+Sld(TabESP, "espFill", {
+    Title = "Fill Transparency (x100)", Value = {Min = 0, Max = 100, Default = 75}, Step = 5,
+    Callback = function(v) ESP.fill = v / 100 end,
+})
+TabESP:Colorpicker({
+    Title = "ESP Color", Default = GREEN,
+    Callback = function(c) ESP.color = c end,
+})
+
+---------------- VISUAL ----------------
+TabVisual:Section({Title = "Lighting"})
+Tog(TabVisual, "fullbright", {
+    Title = "Fullbright", Desc = "สว่างทั้งแมพ",
+    Callback = function(v)
+        S.fullbright = v
+        if not v then
+            Lighting.Brightness = origLight.Brightness
+            Lighting.ClockTime = origLight.ClockTime
+            Lighting.GlobalShadows = origLight.GlobalShadows
+            Lighting.Ambient = origLight.Ambient
+            Lighting.OutdoorAmbient = origLight.OutdoorAmbient
+        end
+    end,
+})
+Tog(TabVisual, "noFog", {
+    Title = "No Fog", Desc = "ลบหมอก",
+    Callback = function(v)
+        S.noFog = v
+        if not v then
+            Lighting.FogEnd = origLight.FogEnd
+            Lighting.FogStart = origLight.FogStart
+        end
+    end,
+})
+Sld(TabVisual, "clock", {
+    Title = "Time of Day", Value = {Min = 0, Max = 24, Default = 14}, Step = 1,
+    Callback = function(v) if not S.fullbright then Lighting.ClockTime = v end end,
+})
+Tog(TabVisual, "noShadow", {
+    Title = "Remove Shadows",
+    Callback = function(v) Lighting.GlobalShadows = not v end,
+})
+Tog(TabVisual, "nightVision", {
+    Title = "Night Vision", Desc = "มองเห็นในที่มืดโทนเขียว",
+    Callback = function(v) fxNV.Enabled = v end,
+})
+
+TabVisual:Section({Title = "Effects"})
+Tog(TabVisual, "grading", {
+    Title = "Color Grading",
+    Callback = function(v) fxCC.Enabled = v end,
+})
+Sld(TabVisual, "ccSat", {
+    Title = "Saturation (x10)", Value = {Min = -10, Max = 30, Default = 0}, Step = 1,
+    Callback = function(v) fxCC.Saturation = v / 10 end,
+})
+Sld(TabVisual, "ccCon", {
+    Title = "Contrast (x10)", Value = {Min = -10, Max = 10, Default = 0}, Step = 1,
+    Callback = function(v) fxCC.Contrast = v / 10 end,
+})
+Sld(TabVisual, "ccBri", {
+    Title = "Brightness (x10)", Value = {Min = -5, Max = 5, Default = 0}, Step = 1,
+    Callback = function(v) fxCC.Brightness = v / 10 end,
+})
+Tog(TabVisual, "bloom", {
+    Title = "Bloom Glow",
+    Callback = function(v)
+        fxBloom.Enabled = v
+        fxBloom.Intensity = 1.2
+        fxBloom.Size = 30
+        fxBloom.Threshold = 0.9
+    end,
+})
+Tog(TabVisual, "blur", {
+    Title = "Blur",
+    Callback = function(v) fxBlur.Enabled = v end,
+})
+Sld(TabVisual, "blurSize", {
+    Title = "Blur Size", Value = {Min = 0, Max = 40, Default = 0}, Step = 1,
+    Callback = function(v) fxBlur.Size = v end,
+})
+Tog(TabVisual, "sunrays", {
+    Title = "Sun Rays",
+    Callback = function(v) fxRays.Enabled = v fxRays.Intensity = 0.25 end,
+})
+
+TabVisual:Section({Title = "World / Performance"})
+Tog(TabVisual, "xray", {
+    Title = "X-Ray", Desc = "ทำให้สิ่งก่อสร้างโปร่งใส",
+    Callback = function(v) S.xray = v setXray(v) end,
+}, true)
+TabVisual:Button({
+    Title = "FPS Boost", Desc = "ลดกราฟิก/ปิดพาร์ทิเคิล",
+    Callback = function()
+        pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
+        Lighting.GlobalShadows = false
+        for _, d in ipairs(workspace:GetDescendants()) do
+            if d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Smoke")
+                or d:IsA("Fire") or d:IsA("Sparkles") then
+                d.Enabled = false
+            end
+        end
+        notify("FPS Boost", "ลดกราฟิกเรียบร้อย", "check")
+    end,
+})
+Sld(TabVisual, "quality", {
+    Title = "Graphics Quality", Value = {Min = 1, Max = 10, Default = 5}, Step = 1,
+    Callback = function(v)
+        pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel:FromValue(v) end)
+    end,
+})
+if typeof(setfpscap) == "function" then
+    Sld(TabVisual, "fpscap", {
+        Title = "FPS Cap", Value = {Min = 30, Max = 360, Default = 60}, Step = 10,
+        Callback = function(v) pcall(setfpscap, v) end,
+    })
+end
+
+---------------- TELEPORT ----------------
+TabTP:Section({Title = "Player Teleport"})
+local tpDropdown
+tpDropdown = TabTP:Dropdown({
+    Title = "Select Player", Values = playerNames(), Value = nil,
+    Callback = function(v) selectedPlayer = Players:FindFirstChild(tostring(v)) end,
+})
+local function refreshPlayers()
+    pcall(function() tpDropdown:Refresh(playerNames()) end)
+end
+Players.PlayerAdded:Connect(function() task.defer(refreshPlayers) end)
+Players.PlayerRemoving:Connect(function() task.defer(refreshPlayers) end)
+
+TabTP:Button({Title = "Refresh Player List", Callback = refreshPlayers})
+TabTP:Button({
+    Title = "Teleport To Player",
+    Callback = function()
+        local root = getRoot()
+        local tChar = selectedPlayer and selectedPlayer.Character
+        local tRoot = tChar and tChar:FindFirstChild("HumanoidRootPart")
+        if root and tRoot then
+            root.CFrame = tRoot.CFrame * CFrame.new(0, 0, 3)
+            notify("Teleport", "วาร์ปไปหา " .. selectedPlayer.Name, "map-pin")
+        else
+            notify("Teleport", "เลือกผู้เล่นก่อน", "x")
+        end
+    end,
+})
+TabTP:Button({
+    Title = "Teleport To Random Player",
+    Callback = function()
+        local list = otherPlayers()
+        local root = getRoot()
+        if #list > 0 and root then
+            local p = list[math.random(1, #list)]
+            local r = p.Character and p.Character:FindFirstChild("HumanoidRootPart")
+            if r then
+                root.CFrame = r.CFrame * CFrame.new(0, 0, 3)
+                notify("Teleport", "วาร์ปไปหา " .. p.Name, "map-pin")
+            end
+        else
+            notify("Teleport", "ไม่มีผู้เล่นคนอื่น", "x")
+        end
+    end,
+})
+
+TabTP:Section({Title = "Spectate"})
+Tog(TabTP, "spectate", {
+    Title = "Spectate Selected Player", Desc = "ดูมุมมองผู้เล่นที่เลือก",
+    Callback = function(v)
+        if v then
+            if not spectate(selectedPlayer) then notify("Spectate", "เลือกผู้เล่นก่อน", "x") end
+        else
+            stopSpectate()
+        end
+    end,
+}, true)
+local function specStep(d)
+    local list = otherPlayers()
+    if #list == 0 then notify("Spectate", "ไม่มีผู้เล่นคนอื่น", "x") return end
+    specIdx = ((specIdx + d - 1) % #list) + 1
+    selectedPlayer = list[specIdx]
+    spectate(selectedPlayer)
+    notify("Spectate", "กำลังดู " .. selectedPlayer.Name, "eye")
+end
+TabTP:Button({Title = "Spectate Next", Callback = function() specStep(1) end})
+TabTP:Button({Title = "Spectate Previous", Callback = function() specStep(-1) end})
+TabTP:Button({Title = "Stop Spectate", Callback = stopSpectate})
+
+TabTP:Section({Title = "Waypoints (บันทึกแยกตามแมพ)"})
+TabTP:Input({
+    Title = "Waypoint Name", Placeholder = "เช่น Base",
+    Callback = function(t) wpName = tostring(t) end,
+})
+local wpDropdown
+wpDropdown = TabTP:Dropdown({
+    Title = "Saved Waypoints", Values = wpNames(), Value = nil,
+    Callback = function(v) wpSelected = tostring(v) end,
+})
+local function refreshWP() pcall(function() wpDropdown:Refresh(wpNames()) end) end
+TabTP:Button({
+    Title = "Save Current Position",
+    Callback = function()
+        local root = getRoot()
+        if not root then return end
+        local name = (wpName ~= "" and wpName) or ("WP" .. (#WP + 1))
+        local p = root.Position
+        table.insert(WP, {name = name, x = p.X, y = p.Y, z = p.Z})
+        saveStore()
+        refreshWP()
+        notify("Waypoint", "บันทึก: " .. name, "check")
+    end,
+})
+TabTP:Button({
+    Title = "Teleport To Waypoint",
+    Callback = function()
+        local root = getRoot()
+        for _, w in ipairs(WP) do
+            if w.name == wpSelected and root then
+                root.CFrame = CFrame.new(w.x, w.y + 3, w.z)
+                notify("Waypoint", "วาร์ปไป " .. w.name, "map-pin")
+                return
+            end
+        end
+        notify("Waypoint", "เลือกจุดก่อน", "x")
+    end,
+})
+TabTP:Button({
+    Title = "Delete Waypoint",
+    Callback = function()
+        for i, w in ipairs(WP) do
+            if w.name == wpSelected then
+                table.remove(WP, i)
+                saveStore()
+                refreshWP()
+                notify("Waypoint", "ลบ " .. w.name, "trash")
+                return
+            end
+        end
+    end,
+})
+
+TabTP:Section({Title = "Coordinates"})
+TabTP:Input({Title = "X", Placeholder = "0", Callback = function(t) tpX = tonumber(t) or 0 end})
+TabTP:Input({Title = "Y", Placeholder = "0", Callback = function(t) tpY = tonumber(t) or 0 end})
+TabTP:Input({Title = "Z", Placeholder = "0", Callback = function(t) tpZ = tonumber(t) or 0 end})
+TabTP:Button({
+    Title = "Teleport To XYZ",
+    Callback = function()
+        local root = getRoot()
+        if root then root.CFrame = CFrame.new(tpX, tpY, tpZ) end
+    end,
+})
+TabTP:Button({
+    Title = "Copy My Position",
+    Callback = function()
+        local root = getRoot()
+        if root and setclipboard then
+            local p = root.Position
+            setclipboard(string.format("%d, %d, %d", p.X, p.Y, p.Z))
+            notify("Copied", "คัดลอกพิกัดแล้ว", "check")
+        else
+            notify("Copy", "executor ไม่รองรับ setclipboard", "x")
+        end
+    end,
+})
+TabTP:Button({
+    Title = "Save Quick Position",
+    Callback = function()
+        local root = getRoot()
+        if root then savedCF = root.CFrame notify("Quick Save", "บันทึกแล้ว", "check") end
+    end,
+})
+TabTP:Button({
+    Title = "Teleport To Quick Position",
+    Callback = function()
+        local root = getRoot()
+        if root and savedCF then root.CFrame = savedCF else notify("Quick Save", "ยังไม่ได้บันทึก", "x") end
+    end,
+})
+TabTP:Button({
+    Title = "Teleport To Spawn",
+    Callback = function()
+        local root = getRoot()
+        local sp = workspace:FindFirstChildWhichIsA("SpawnLocation", true)
+        if root and sp then root.CFrame = sp.CFrame + Vector3.new(0, 5, 0)
+        else notify("Spawn", "ไม่พบจุดเกิด", "x") end
+    end,
+})
+
+---------------- MISC ----------------
+TabMisc:Section({Title = "Server"})
+TabMisc:Button({
+    Title = "Rejoin", Desc = "เข้าเซิร์ฟเดิมใหม่",
+    Callback = function()
+        if #Players:GetPlayers() <= 1 then
+            LocalPlayer:Kick("\nRejoining...")
+            task.wait()
+            TeleportService:Teleport(game.PlaceId, LocalPlayer)
+        else
+            TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
+        end
+    end,
+})
+TabMisc:Button({Title = "Server Hop", Desc = "ย้ายไปเซิร์ฟอื่น", Callback = serverHop})
+Tog(TabMisc, "autoRejoin", {
+    Title = "Auto Rejoin", Desc = "เข้าเซิร์ฟใหม่อัตโนมัติเมื่อหลุด/โดนเตะ",
+    Callback = function(v) S.autoRejoin = v end,
+})
+TabMisc:Button({
+    Title = "Copy Job ID",
+    Callback = function()
+        if setclipboard then setclipboard(game.JobId) notify("Copied", "คัดลอก Job ID แล้ว", "check")
+        else notify("Copy", "executor ไม่รองรับ setclipboard", "x") end
+    end,
+})
+TabMisc:Button({
+    Title = "Copy Place ID",
+    Callback = function()
+        if setclipboard then setclipboard(tostring(game.PlaceId)) notify("Copied", "คัดลอก Place ID แล้ว", "check")
+        else notify("Copy", "executor ไม่รองรับ setclipboard", "x") end
+    end,
+})
+TabMisc:Button({
+    Title = "Copy Selected Player UserId",
+    Callback = function()
+        if selectedPlayer and setclipboard then
+            setclipboard(tostring(selectedPlayer.UserId))
+            notify("Copied", "คัดลอก UserId แล้ว", "check")
+        else
+            notify("Copy", "เลือกผู้เล่นก่อน / ไม่รองรับ", "x")
+        end
+    end,
+})
+
+TabMisc:Section({Title = "World Tools"})
+Tog(TabMisc, "clickDelete", {
+    Title = "Click Delete", Desc = "Alt + คลิกเพื่อลบพาร์ท (เฉพาะฝั่งเรา)",
+    Callback = function(v) S.clickDelete = v end,
+}, true)
+TabMisc:Button({
+    Title = "Undo Delete",
+    Callback = function()
+        local last = table.remove(deleted)
+        if last and last.part then
+            pcall(function() last.part.Parent = last.parent end)
+        else
+            notify("Undo", "ไม่มีอะไรให้กู้คืน", "x")
+        end
+    end,
+})
+
+TabMisc:Section({Title = "Auto Press"})
+Tog(TabMisc, "autoPress", {
+    Title = "Auto Press", Desc = "กดปุ่มที่เลือกซ้ำอัตโนมัติ",
+    Callback = function(v) AP.on = v end,
+}, true)
+TabMisc:Dropdown({
+    Title = "Key To Press", Values = APList, Value = "E",
+    Callback = function(v) AP.key = tostring(v) end,
+})
+Sld(TabMisc, "apInterval", {
+    Title = "Interval (ms)", Value = {Min = 50, Max = 3000, Default = 500}, Step = 10,
+    Callback = function(v) AP.interval = v / 1000 end,
+})
+
+TabMisc:Section({Title = "Utility"})
+if hasClick then
+    Tog(TabMisc, "autoClick", {
+        Title = "Auto Clicker", Desc = "คลิกซ้ำอัตโนมัติ",
+        Callback = function(v) S.autoClick = v end,
+    }, true)
+    Sld(TabMisc, "cps", {
+        Title = "Clicks Per Second", Value = {Min = 1, Max = 30, Default = 10}, Step = 1,
+        Callback = function(v) S.cps = v end,
+    })
+end
+Sld(TabMisc, "volume", {
+    Title = "Master Volume", Value = {Min = 0, Max = 100, Default = 50}, Step = 5,
+    Callback = function(v)
+        pcall(function()
+            UserSettings():GetService("UserGameSettings").MasterVolume = v / 100
+        end)
+    end,
+})
+TabMisc:Button({
+    Title = "Show Chat",
+    Callback = function()
+        pcall(function() StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Chat, true) end)
+    end,
+})
+TabMisc:Button({
+    Title = "Show Player List",
+    Callback = function()
+        pcall(function() StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.PlayerList, true) end)
+    end,
+})
+TabMisc:Button({
+    Title = "Enable Reset Button",
+    Callback = function()
+        pcall(function() StarterGui:SetCore("ResetButtonCallback", true) end)
+    end,
+})
+
+---------------- HOTKEYS ----------------
+TabKeys:Paragraph({
+    Title = "> HOTKEYS",
+    Desc = "กดปุ่มเพื่อเปิด/ปิดฟังก์ชันได้ทันทีโดยไม่ต้องเปิดเมนู\nคลิกช่อง Keybind เพื่อเปลี่ยนปุ่ม",
+})
+local function hotkey(title, key, default)
+    TabKeys:Keybind({
+        Title = title, Value = default,
+        Callback = function() flip(key) end,
+    })
+end
+hotkey("Toggle Fly", "fly", "F")
+hotkey("Toggle Noclip", "noclip", "N")
+hotkey("Toggle Speed", "speedOn", "X")
+hotkey("Toggle ESP", "esp", "K")
+hotkey("Toggle Fullbright", "fullbright", "L")
+hotkey("Toggle Freecam", "freecam", "P")
+hotkey("Toggle Infinite Jump", "infJump", "J")
+hotkey("Toggle Crosshair", "crossOn", "C")
+hotkey("Toggle Float", "float", "G")
+hotkey("Toggle Auto Press", "autoPress", "H")
+
+---------------- SETTINGS ----------------
+TabSet:Section({Title = "Interface"})
+TabSet:Dropdown({
+    Title = "Theme", Values = ThemeOrder, Value = startTheme,
+    Callback = function(v)
+        local t = Themes[tostring(v)]
+        if t then
+            pcall(function() WindUI:SetTheme(t.n) end)
+            applyAccent(Color3.fromHex(t.a))
+            Store.theme = tostring(v)
+            saveStore()
+        end
+    end,
+})
+Tog(TabSet, "hud", {
+    Title = "Show HUD", Desc = "FPS / Ping / พิกัด มุมจอ",
+    Callback = function(v) hudLabel.Visible = v end,
+})
+TabSet:Keybind({
+    Title = "Toggle UI Key", Desc = "ปุ่มซ่อน/แสดงเมนู", Value = "RightShift",
+    Callback = function(key)
+        pcall(function()
+            if typeof(key) == "EnumItem" then
+                Window:SetToggleKey(key)
+            elseif typeof(key) == "string" and Enum.KeyCode[key] then
+                Window:SetToggleKey(Enum.KeyCode[key])
+            end
+        end)
+    end,
+})
+
+TabSet:Section({Title = "Config"})
+TabSet:Button({
+    Title = "Save Config", Desc = "บันทึกค่าที่ตั้งไว้ทั้งหมด",
+    Callback = function()
+        if not canFile then notify("Config", "executor ไม่รองรับการบันทึกไฟล์", "x") return end
+        Store.settings = {}
+        for k, r in pairs(Reg) do
+            if not r.nosave and Cfg[k] ~= nil then Store.settings[k] = Cfg[k] end
+        end
+        if saveStore() then notify("Config", "บันทึกเรียบร้อย", "check")
+        else notify("Config", "บันทึกไม่สำเร็จ", "x") end
+    end,
+})
+local function applyConfig()
+    for k, v in pairs(Store.settings) do
+        local r = Reg[k]
+        if r and not r.nosave then
+            pcall(function() r.el:Set(v) end)
+            task.wait(0.03)
+        end
+    end
+end
+TabSet:Button({
+    Title = "Load Config", Desc = "โหลดค่าที่บันทึกไว้",
+    Callback = function()
+        loadStore()
+        task.spawn(applyConfig)
+        notify("Config", "โหลดค่าเรียบร้อย", "check")
+    end,
+})
+TabSet:Toggle({
+    Title = "Auto Load Config", Desc = "โหลดค่าอัตโนมัติตอนเปิดสคริป", Default = Store.autoload and true or false,
+    Callback = function(v)
+        Store.autoload = v
+        saveStore()
+    end,
+})
+
+TabSet:Section({Title = "Danger Zone"})
+TabSet:Button({
+    Title = "Unload / Destroy UI", Desc = "ปิดสคริปต์และคืนค่าทั้งหมด",
+    Callback = function()
+        if type(ENV.ZENOX_UNLOAD) == "function" then
+            ENV.ZENOX_UNLOAD()
+        end
+    end,
+})
+
+
+----------------------------------------------------------------
+-- TROLL + MACRO
+----------------------------------------------------------------
+do
+    Store.macros = Store.macros or {}
+
+    local function r2(x) return math.floor(x * 100 + 0.5) / 100 end
+    local function r3(x) return math.floor(x * 1000 + 0.5) / 1000 end
+
+    ----------------------------------------------------------------
+    -- TROLL
+    ----------------------------------------------------------------
+    local T = {
+        mode = "Orbit", target = false, radius = 8, speed = 3, angle = 0,
+        lag = false, jitter = false, jitAmt = 25,
+        blink = false, blinkInt = 0.35,
+        emote = false, dizzy = false, dizAmt = 8,
+    }
+    local blinkAcc, blinkOrig = 0, nil
+    local trollConn
+
+    local function cleanupTroll()
+        if trollConn then trollConn:Disconnect() trollConn = nil end
+        T.lag, T.target = false, false
+        pcall(function() RunService:UnbindFromRenderStep("ZenoxDizzy") end)
+        local r = getRoot()
+        if r then r.Anchored = false end
+    end
+
+    trollConn = RunService.Heartbeat:Connect(function(dt)
+        if not ENV.ZENOX_LOADED then cleanupTroll() return end
+        local root, hum = getRoot(), getHum()
+        if not root then return end
+
+        if T.target then
+            local tChar = selectedPlayer and selectedPlayer.Character
+            local tRoot = tChar and tChar:FindFirstChild("HumanoidRootPart")
+            if tRoot then
+                if T.mode == "Orbit" then
+                    T.angle += T.speed * dt
+                    local off = Vector3.new(math.cos(T.angle) * T.radius, 0, math.sin(T.angle) * T.radius)
+                    root.CFrame = CFrame.lookAt(tRoot.Position + off, tRoot.Position)
+                elseif T.mode == "Follow" then
+                    root.CFrame = tRoot.CFrame * CFrame.new(0, 0, T.radius)
+                elseif T.mode == "Headsit" then
+                    local head = tChar:FindFirstChild("Head")
+                    if head then root.CFrame = head.CFrame * CFrame.new(0, 1.6, 0) end
+                    if hum then hum.Sit = true end
+                    root.AssemblyLinearVelocity = Vector3.zero
+                elseif T.mode == "Piggyback" then
+                    root.CFrame = tRoot.CFrame * CFrame.new(0, 0.5, 0.9)
+                    if hum then hum.Sit = true end
+                    root.AssemblyLinearVelocity = Vector3.zero
+                end
+            end
+        end
+
+        if T.jitter then
+            root.CFrame = root.CFrame * CFrame.Angles(0, math.rad(math.random(-T.jitAmt, T.jitAmt)), 0)
+        end
+
+        if T.blink then
+            blinkAcc += dt
+            if blinkOrig then
+                root.CFrame = blinkOrig
+                blinkOrig = nil
+            elseif blinkAcc >= T.blinkInt then
+                blinkAcc = 0
+                blinkOrig = root.CFrame
+                local a = math.random() * math.pi * 2
+                root.CFrame = blinkOrig + Vector3.new(math.cos(a) * 4, 0, math.sin(a) * 4)
+            end
+        else
+            blinkOrig = nil
+        end
+    end)
+
+    -- Fake lag
+    task.spawn(function()
+        while ENV.ZENOX_LOADED do
+            task.wait(0.25)
+            if T.lag then
+                local r = getRoot()
+                if r then
+                    r.Anchored = true
+                    task.wait(0.12)
+                    r.Anchored = false
+                end
+            end
+        end
+    end)
+
+    -- Emote loop
+    task.spawn(function()
+        local list = {"dance", "dance2", "dance3"}
+        while ENV.ZENOX_LOADED do
+            task.wait(2.5)
+            if T.emote then
+                local h = getHum()
+                if h then pcall(function() h:PlayEmote(list[math.random(1, #list)]) end) end
+            end
+        end
+    end)
+
+    -- Dizzy screen (เห็นแค่ฝั่งเรา)
+    local function setDizzy(on)
+        pcall(function() RunService:UnbindFromRenderStep("ZenoxDizzy") end)
+        if on then
+            RunService:BindToRenderStep("ZenoxDizzy", Enum.RenderPriority.Camera.Value + 1, function()
+                if not ENV.ZENOX_LOADED then
+                    pcall(function() RunService:UnbindFromRenderStep("ZenoxDizzy") end)
+                    return
+                end
+                local c = cam()
+                c.CFrame = c.CFrame * CFrame.Angles(0, 0, math.sin(os.clock() * 2) * math.rad(T.dizAmt))
+            end)
+        end
+    end
+
+    ---------------- TROLL UI ----------------
+    TabTroll:Section({Title = "Target Player"})
+    TabTroll:Paragraph({
+        Title = "> วิธีใช้",
+        Desc = "เลือกผู้เล่นที่แท็บ Teleport > Select Player ก่อน แล้วกลับมาเปิดโหมดที่นี่",
+    })
+    TabTroll:Dropdown({
+        Title = "Mode", Values = {"Orbit", "Follow", "Headsit", "Piggyback"}, Value = "Orbit",
+        Callback = function(v) T.mode = tostring(v) end,
+    })
+    Tog(TabTroll, "trollOn", {
+        Title = "Start Target Mode", Desc = "เริ่มโหมดที่เลือกกับผู้เล่นเป้าหมาย",
+        Callback = function(v)
+            if v then
+                if not selectedPlayer then
+                    notify("Troll", "เลือกผู้เล่นก่อน", "x")
+                    task.defer(flip, "trollOn")
+                    return
+                end
+                T.angle = 0
+                T.target = true
+            else
+                T.target = false
+                local h = getHum()
+                if h and (T.mode == "Headsit" or T.mode == "Piggyback") then h.Sit = false end
+            end
+        end,
+    }, true)
+    Sld(TabTroll, "trollRadius", {
+        Title = "Distance / Radius", Value = {Min = 3, Max = 40, Default = 8}, Step = 1,
+        Callback = function(v) T.radius = v end,
+    })
+    Sld(TabTroll, "trollSpeed", {
+        Title = "Orbit Speed", Value = {Min = 1, Max = 20, Default = 3}, Step = 1,
+        Callback = function(v) T.speed = v end,
+    })
+
+    TabTroll:Section({Title = "Self Effects"})
+    Tog(TabTroll, "fakeLag", {
+        Title = "Fake Lag", Desc = "ทำให้คนอื่นเห็นเราสะดุดเหมือนแลค",
+        Callback = function(v)
+            T.lag = v
+            if not v then local r = getRoot() if r then r.Anchored = false end end
+        end,
+    }, true)
+    Tog(TabTroll, "jitter", {
+        Title = "Jitter", Desc = "ตัวสั่นหมุนถี่ๆ เหมือนผี",
+        Callback = function(v) T.jitter = v end,
+    }, true)
+    Sld(TabTroll, "jitAmt", {
+        Title = "Jitter Angle", Value = {Min = 5, Max = 90, Default = 25}, Step = 5,
+        Callback = function(v) T.jitAmt = v end,
+    })
+    Tog(TabTroll, "blink", {
+        Title = "Blink", Desc = "กระพริบวาร์ปสั้นๆ รอบตัว",
+        Callback = function(v) T.blink = v end,
+    }, true)
+    Sld(TabTroll, "blinkInt", {
+        Title = "Blink Interval (x10ms)", Value = {Min = 10, Max = 100, Default = 35}, Step = 5,
+        Callback = function(v) T.blinkInt = v / 100 end,
+    })
+    Tog(TabTroll, "emoteLoop", {
+        Title = "Dance Loop", Desc = "เล่นท่าเต้นวนซ้ำ (เฉพาะเกมที่รองรับ Emote)",
+        Callback = function(v) T.emote = v end,
+    }, true)
+    Tog(TabTroll, "dizzy", {
+        Title = "Dizzy Screen", Desc = "กล้องโยกเอียง เห็นแค่ฝั่งเรา",
+        Callback = function(v) T.dizzy = v setDizzy(v) end,
+    }, true)
+    Sld(TabTroll, "dizAmt", {
+        Title = "Dizzy Intensity", Value = {Min = 1, Max = 45, Default = 8}, Step = 1,
+        Callback = function(v) T.dizAmt = v end,
+    })
+
+    ----------------------------------------------------------------
+    -- MACRO (บันทึกเส้นทาง + ปุ่มที่กด แล้วเล่นซ้ำ)
+    ----------------------------------------------------------------
+    local M = {name = "", interval = 0.1, speed = 1, loop = false, selected = nil, importText = ""}
+    local Rec = {on = false, t0 = 0, last = 0, path = {}, events = {}, conns = {}}
+    local Play = {conn = nil, t = 0, dur = 0, name = ""}
+
+    -- คีย์ที่ไม่บันทึก (เดินใช้เส้นทางแทน + คีย์ลัดของฮับ)
+    local SKIP = {}
+    for _, k in ipairs({"W", "A", "S", "D", "Space", "Unknown", "Q", "LeftShift", "RightShift",
+        "LeftControl", "RightControl", "LeftAlt", "RightAlt",
+        "F", "N", "X", "K", "L", "P", "J", "C", "G", "H", "B", "M"}) do SKIP[k] = true end
+
+    local function macroNames()
+        local t = {}
+        for n in pairs(Store.macros) do table.insert(t, n) end
+        table.sort(t)
+        if #t == 0 then t = {"(empty)"} end
+        return t
+    end
+
+    local macroDD
+    local function refreshMacros() pcall(function() macroDD:Refresh(macroNames()) end) end
+
+    local function pressKeyName(n)
+        local ok, kc = pcall(function() return Enum.KeyCode[n] end)
+        if VIM and ok and kc then
+            pcall(function()
+                VIM:SendKeyEvent(true, kc, false, game)
+                task.wait(0.05)
+                VIM:SendKeyEvent(false, kc, false, game)
+            end)
+        end
+    end
+
+    -- ---- record ----
+    local function sample()
+        local root = getRoot()
+        if not root then return end
+        local p = root.Position
+        local _, yaw = root.CFrame:ToOrientation()
+        table.insert(Rec.path, {r3(os.clock() - Rec.t0), r2(p.X), r2(p.Y), r2(p.Z), r3(yaw)})
+    end
+
+    local function stopPlay()
+        if Play.conn then Play.conn:Disconnect() Play.conn = nil end
+    end
+
+    local function stopRecording(save)
+        Rec.on = false
+        for _, c in ipairs(Rec.conns) do c:Disconnect() end
+        Rec.conns = {}
+        if not save then return end
+        sample()
+        if #Rec.path < 2 then notify("Macro", "สั้นเกินไป ไม่ได้บันทึก", "x") return end
+        local count = 0
+        for _ in pairs(Store.macros) do count += 1 end
+        local name = (M.name ~= "" and M.name) or ("Macro" .. (count + 1))
+        Store.macros[name] = {path = Rec.path, events = Rec.events, dur = Rec.path[#Rec.path][1]}
+        saveStore()
+        refreshMacros()
+        notify("Macro", "บันทึก: " .. name, "check")
+    end
+
+    local function startRecording()
+        stopPlay()
+        Rec.path, Rec.events = {}, {}
+        Rec.t0, Rec.last, Rec.on = os.clock(), 0, true
+        sample()
+        table.insert(Rec.conns, RunService.Heartbeat:Connect(function()
+            if not ENV.ZENOX_LOADED then stopRecording(false) return end
+            local now = os.clock() - Rec.t0
+            if now - Rec.last >= M.interval then Rec.last = now sample() end
+            if #Rec.path >= 6000 then
+                stopRecording(true)
+                if Cfg.macroRec then flip("macroRec") end
+            end
+        end))
+        table.insert(Rec.conns, UIS.InputBegan:Connect(function(input, gp)
+            if gp or input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+            local n = input.KeyCode.Name
+            if SKIP[n] then return end
+            table.insert(Rec.events, {r3(os.clock() - Rec.t0), "k", n})
+        end))
+        table.insert(Rec.conns, UIS.JumpRequest:Connect(function()
+            table.insert(Rec.events, {r3(os.clock() - Rec.t0), "j"})
+        end))
+    end
+
+    -- ---- play ----
+    local function startPlay(name)
+        local m = Store.macros[name]
+        if not m then return false end
+        stopPlay()
+        Play.t, Play.dur, Play.name = 0, m.dur, name
+        local idx, eidx = 1, 1
+        Play.conn = RunService.Heartbeat:Connect(function(dt)
+            if not ENV.ZENOX_LOADED then stopPlay() return end
+            local root, hum = getRoot(), getHum()
+            if not root then return end
+
+            Play.t += dt * M.speed
+            if Play.t >= m.dur then
+                if M.loop then
+                    Play.t, idx, eidx = 0, 1, 1
+                else
+                    stopPlay()
+                    if Cfg.macroPlay then flip("macroPlay") end
+                    notify("Macro", "เล่นจบแล้ว", "check")
+                    return
+                end
+            end
+
+            local path, t = m.path, Play.t
+            while idx < #path and path[idx + 1][1] <= t do idx += 1 end
+            local a, b = path[idx], path[idx + 1] or path[idx]
+            local alpha = (b[1] > a[1]) and math.clamp((t - a[1]) / (b[1] - a[1]), 0, 1) or 0
+            local pos = Vector3.new(
+                a[2] + (b[2] - a[2]) * alpha,
+                a[3] + (b[3] - a[3]) * alpha,
+                a[4] + (b[4] - a[4]) * alpha)
+            local d = (b[5] - a[5] + math.pi) % (math.pi * 2) - math.pi
+            root.CFrame = CFrame.new(pos) * CFrame.Angles(0, a[5] + d * alpha, 0)
+            root.AssemblyLinearVelocity = Vector3.zero
+
+            while m.events[eidx] and m.events[eidx][1] <= t do
+                local e = m.events[eidx]
+                if e[2] == "j" and hum then
+                    hum:ChangeState(Enum.HumanoidStateType.Jumping)
+                elseif e[2] == "k" and e[3] then
+                    task.spawn(pressKeyName, e[3])
+                end
+                eidx += 1
+            end
+        end)
+        return true
+    end
+
+    ---------------- MACRO UI ----------------
+    local statusPara = TabMacro:Paragraph({Title = "> STATUS", Desc = "idle"})
+
+    TabMacro:Section({Title = "Record"})
+    TabMacro:Input({
+        Title = "Macro Name", Placeholder = "เช่น Farm1",
+        Callback = function(t) M.name = tostring(t) end,
+    })
+    Sld(TabMacro, "macroRate", {
+        Title = "Sample Interval (ms)", Value = {Min = 50, Max = 300, Default = 100}, Step = 10,
+        Callback = function(v) M.interval = v / 1000 end,
+    })
+    Tog(TabMacro, "macroRec", {
+        Title = "Record", Desc = "บันทึกตำแหน่ง + ปุ่มที่กด (WASD ใช้เส้นทางแทน)",
+        Callback = function(v)
+            if v then startRecording() elseif Rec.on then stopRecording(true) end
+        end,
+    }, true)
+
+    TabMacro:Section({Title = "Playback"})
+    macroDD = TabMacro:Dropdown({
+        Title = "Saved Macros", Values = macroNames(), Value = nil,
+        Callback = function(v) M.selected = tostring(v) end,
+    })
+    Tog(TabMacro, "macroPlay", {
+        Title = "Play", Desc = "เล่น Macro ที่เลือก",
+        Callback = function(v)
+            if v then
+                if Rec.on then
+                    notify("Macro", "กำลังบันทึกอยู่", "x")
+                    task.defer(flip, "macroPlay")
+                elseif not (M.selected and startPlay(M.selected)) then
+                    notify("Macro", "เลือก Macro ก่อน", "x")
+                    task.defer(flip, "macroPlay")
+                end
+            else
+                stopPlay()
+            end
+        end,
+    }, true)
+    Tog(TabMacro, "macroLoop", {
+        Title = "Loop", Desc = "เล่นวนซ้ำ",
+        Callback = function(v) M.loop = v end,
+    })
+    Sld(TabMacro, "macroSpeed", {
+        Title = "Playback Speed (x0.1)", Value = {Min = 5, Max = 30, Default = 10}, Step = 1,
+        Callback = function(v) M.speed = v / 10 end,
+    })
+
+    TabMacro:Section({Title = "Manage"})
+    TabMacro:Button({Title = "Refresh List", Callback = refreshMacros})
+    TabMacro:Button({
+        Title = "Delete Selected",
+        Callback = function()
+            if M.selected and Store.macros[M.selected] then
+                Store.macros[M.selected] = nil
+                saveStore()
+                refreshMacros()
+                notify("Macro", "ลบแล้ว: " .. M.selected, "trash")
+                M.selected = nil
+            else
+                notify("Macro", "เลือก Macro ก่อน", "x")
+            end
+        end,
+    })
+    TabMacro:Button({
+        Title = "Export Selected", Desc = "คัดลอก Macro เป็นข้อความ (ไว้แชร์/สำรอง)",
+        Callback = function()
+            local m = M.selected and Store.macros[M.selected]
+            if m and setclipboard then
+                setclipboard(HttpService:JSONEncode({name = M.selected, data = m}))
+                notify("Macro", "คัดลอกแล้ว", "check")
+            else
+                notify("Macro", "เลือก Macro ก่อน / ไม่รองรับ setclipboard", "x")
+            end
+        end,
+    })
+    TabMacro:Input({
+        Title = "Import Text", Placeholder = "วางข้อความที่ Export มา",
+        Callback = function(t) M.importText = tostring(t) end,
+    })
+    TabMacro:Button({
+        Title = "Import",
+        Callback = function()
+            local ok, d = pcall(function() return HttpService:JSONDecode(M.importText) end)
+            if ok and type(d) == "table" and type(d.name) == "string" and type(d.data) == "table"
+                and type(d.data.path) == "table" and #d.data.path >= 2
+                and type(d.data.dur) == "number" and type(d.data.events) == "table" then
+                Store.macros[d.name] = d.data
+                saveStore()
+                refreshMacros()
+                notify("Macro", "นำเข้า: " .. d.name, "check")
+            else
+                notify("Macro", "ข้อความไม่ถูกต้อง", "x")
+            end
+        end,
+    })
+
+    TabMacro:Section({Title = "Hotkeys"})
+    TabMacro:Keybind({Title = "Record Hotkey", Value = "B", Callback = function() flip("macroRec") end})
+    TabMacro:Keybind({Title = "Play Hotkey", Value = "M", Callback = function() flip("macroPlay") end})
+
+    -- อัปเดตสถานะ
+    task.spawn(function()
+        local last = ""
+        while ENV.ZENOX_LOADED do
+            task.wait(0.5)
+            local txt = "idle"
+            if Rec.on then
+                txt = string.format("REC  %.1fs | %d pts | %d events",
+                    os.clock() - Rec.t0, #Rec.path, #Rec.events)
+            elseif Play.conn then
+                txt = string.format("PLAY  %s | %.1f / %.1fs%s",
+                    Play.name, Play.t, Play.dur, M.loop and " | loop" or "")
+            end
+            if txt ~= last then
+                last = txt
+                pcall(function() statusPara:SetDesc(txt) end)
+            end
+        end
+    end)
+end
+
+----------------------------------------------------------------
+-- QUICK BUTTONS (floating panel)
+----------------------------------------------------------------
+do
+    -- {ข้อความบนปุ่ม, key ใน Reg}  แก้ลำดับ/เพิ่ม/ลบได้ตามใจ
+    local QUICK_ALL = {
+        {"FLY", "fly"}, {"NOCLIP", "noclip"},
+        {"SPEED", "speedOn"}, {"JUMP+", "infJump"},
+        {"ESP", "esp"}, {"BRIGHT", "fullbright"},
+        {"FLOAT", "float"}, {"FREECAM", "freecam"},
+        {"PRESS", "autoPress"}, {"ANTIVOID", "antiVoid"},
+        {"TROLL", "trollOn"}, {"LAG", "fakeLag"},
+        {"REC", "macroRec"}, {"PLAY", "macroPlay"},
+    }
+    local QUICK = {}
+    for _, q in ipairs(QUICK_ALL) do
+        if Reg[q[2]] then table.insert(QUICK, q) end
+    end
+
+    local W, PAD, BW, BH, GAP, TH = 164, 6, 73, 30, 6, 26
+    local rows = math.ceil(#QUICK / 2)
+    local panicY = PAD + rows * (BH + GAP)
+    local BODY_H = panicY + 28 + PAD
+    local collapsed = false
+
+    local OFF_BG  = Color3.fromRGB(8, 22, 8)
+    local OFF_TXT = Color3.fromRGB(110, 150, 120)
+    local OFF_DOT = Color3.fromRGB(40, 60, 45)
+
+    ------------------------------------------------------------
+    -- Panel
+    ------------------------------------------------------------
+    local panel = Instance.new("Frame")
+    panel.Name = "ZenoxQuick"
+    panel.Position = UDim2.new(1, -W - 12, 0, 70)
+    panel.Size = UDim2.fromOffset(W, TH + BODY_H)
+    panel.BackgroundColor3 = Color3.fromRGB(3, 10, 3)
+    panel.BackgroundTransparency = 0.12
+    panel.BorderSizePixel = 0
+    panel.ClipsDescendants = true
+    panel.Parent = HUD
+    Instance.new("UICorner", panel).CornerRadius = UDim.new(0, 10)
+    local pStroke = Instance.new("UIStroke", panel)
+    pStroke.Color = ACCENT
+    pStroke.Thickness = 1.5
+    pStroke.Transparency = 0.15
+
+    local bar = Instance.new("Frame")
+    bar.Size = UDim2.new(1, 0, 0, TH)
+    bar.BackgroundColor3 = Color3.fromRGB(6, 22, 6)
+    bar.BackgroundTransparency = 0.2
+    bar.BorderSizePixel = 0
+    bar.Parent = panel
+    Instance.new("UICorner", bar).CornerRadius = UDim.new(0, 10)
+
+    local title = Instance.new("TextLabel")
+    title.BackgroundTransparency = 1
+    title.Size = UDim2.new(1, -70, 1, 0)
+    title.Position = UDim2.fromOffset(8, 0)
+    title.Font = Enum.Font.Code
+    title.TextSize = 13
+    title.Text = "> QUICK"
+    title.TextColor3 = ACCENT
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.Parent = bar
+
+    local countLbl = Instance.new("TextLabel")
+    countLbl.BackgroundTransparency = 1
+    countLbl.AnchorPoint = Vector2.new(1, 0.5)
+    countLbl.Position = UDim2.new(1, -30, 0.5, 0)
+    countLbl.Size = UDim2.fromOffset(44, 16)
+    countLbl.Font = Enum.Font.Code
+    countLbl.TextSize = 11
+    countLbl.Text = "0 ON"
+    countLbl.TextColor3 = ACCENT
+    countLbl.TextTransparency = 0.3
+    countLbl.TextXAlignment = Enum.TextXAlignment.Right
+    countLbl.Parent = bar
+
+    local colBtn = Instance.new("TextButton")
+    colBtn.AnchorPoint = Vector2.new(1, 0.5)
+    colBtn.Position = UDim2.new(1, -4, 0.5, 0)
+    colBtn.Size = UDim2.fromOffset(22, 18)
+    colBtn.BackgroundTransparency = 1
+    colBtn.Font = Enum.Font.Code
+    colBtn.TextSize = 18
+    colBtn.Text = "-"
+    colBtn.TextColor3 = ACCENT
+    colBtn.Parent = bar
+
+    local body = Instance.new("Frame")
+    body.Position = UDim2.fromOffset(0, TH)
+    body.Size = UDim2.new(1, 0, 0, BODY_H)
+    body.BackgroundTransparency = 1
+    body.Parent = panel
+
+    ------------------------------------------------------------
+    -- Buttons
+    ------------------------------------------------------------
+    local items = {}
+
+    for i, q in ipairs(QUICK) do
+        local col = (i - 1) % 2
+        local row = math.floor((i - 1) / 2)
+
+        local b = Instance.new("TextButton")
+        b.Position = UDim2.fromOffset(PAD + col * (BW + GAP), PAD + row * (BH + GAP))
+        b.Size = UDim2.fromOffset(BW, BH)
+        b.BackgroundColor3 = OFF_BG
+        b.AutoButtonColor = false
+        b.Font = Enum.Font.Code
+        b.TextSize = 12
+        b.Text = q[1]
+        b.TextColor3 = OFF_TXT
+        b.TextXAlignment = Enum.TextXAlignment.Left
+        b.Parent = body
+        Instance.new("UICorner", b).CornerRadius = UDim.new(0, 7)
+        local pad = Instance.new("UIPadding", b)
+        pad.PaddingLeft = UDim.new(0, 18)
+        local st = Instance.new("UIStroke", b)
+        st.Color = ACCENT
+        st.Thickness = 1
+        st.Transparency = 0.65
+
+        local dot = Instance.new("Frame")
+        dot.AnchorPoint = Vector2.new(0, 0.5)
+        dot.Position = UDim2.new(0, -12, 0.5, 0)
+        dot.Size = UDim2.fromOffset(6, 6)
+        dot.BackgroundColor3 = OFF_DOT
+        dot.BorderSizePixel = 0
+        dot.Parent = b
+        Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
+
+        items[i] = {btn = b, stroke = st, dot = dot, key = q[2], last = nil}
+
+        b.MouseButton1Click:Connect(function()
+            flip(q[2])
+            task.delay(0.06, function() if items[1] then items[1].refresh() end end)
+        end)
+    end
+
+    -- Panic
+    local panic = Instance.new("TextButton")
+    panic.Position = UDim2.fromOffset(PAD, panicY)
+    panic.Size = UDim2.new(1, -PAD * 2, 0, 28)
+    panic.BackgroundColor3 = Color3.fromRGB(40, 8, 8)
+    panic.AutoButtonColor = true
+    panic.Font = Enum.Font.Code
+    panic.TextSize = 12
+    panic.Text = "PANIC : ALL OFF"
+    panic.TextColor3 = Color3.fromRGB(255, 90, 90)
+    panic.Parent = body
+    Instance.new("UICorner", panic).CornerRadius = UDim.new(0, 7)
+    local panicStroke = Instance.new("UIStroke", panic)
+    panicStroke.Color = Color3.fromRGB(255, 60, 60)
+    panicStroke.Thickness = 1
+    panicStroke.Transparency = 0.4
+
+    panic.MouseButton1Click:Connect(function()
+        for _, q in ipairs(QUICK) do
+            if Cfg[q[2]] then flip(q[2]) end
+        end
+        task.delay(0.1, function() if items[1] then items[1].refresh() end end)
+    end)
+
+    ------------------------------------------------------------
+    -- State sync (hotkey / config ก็อัปเดตปุ่มตาม)
+    ------------------------------------------------------------
+    local function refresh()
+        local n = 0
+        pStroke.Color = ACCENT
+        title.TextColor3 = ACCENT
+        countLbl.TextColor3 = ACCENT
+        colBtn.TextColor3 = ACCENT
+        for _, it in ipairs(items) do
+            local on = Cfg[it.key] == true
+            if on then n += 1 end
+            it.stroke.Color = ACCENT
+            local info = TweenInfo.new(0.15)
+            TweenService:Create(it.btn, info, {
+                BackgroundColor3 = on and ACCENT:Lerp(Color3.new(0, 0, 0), 0.72) or OFF_BG,
+                TextColor3 = on and ACCENT or OFF_TXT,
+            }):Play()
+            TweenService:Create(it.stroke, info, {Transparency = on and 0.05 or 0.65}):Play()
+            TweenService:Create(it.dot, info, {BackgroundColor3 = on and ACCENT or OFF_DOT}):Play()
+        end
+        countLbl.Text = n .. " ON"
+    end
+    if items[1] then items[1].refresh = refresh end
+
+    task.spawn(function()
+        while ENV.ZENOX_LOADED and panel.Parent do
+            refresh()
+            task.wait(0.25)
+        end
+    end)
+
+    ------------------------------------------------------------
+    -- Collapse
+    ------------------------------------------------------------
+    colBtn.MouseButton1Click:Connect(function()
+        collapsed = not collapsed
+        colBtn.Text = collapsed and "+" or "-"
+        TweenService:Create(panel, TweenInfo.new(0.25, Enum.EasingStyle.Quad), {
+            Size = UDim2.fromOffset(W, collapsed and TH or (TH + BODY_H)),
+        }):Play()
+    end)
+
+    ------------------------------------------------------------
+    -- Drag (ลากที่แถบชื่อ ใช้ได้ทั้งเมาส์และนิ้ว)
+    ------------------------------------------------------------
+    local dragging, dragStart, startPos
+    bar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = panel.Position
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then dragging = false end
+            end)
+        end
+    end)
+    UIS.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
+            or input.UserInputType == Enum.UserInputType.Touch) then
+            local d = input.Position - dragStart
+            panel.Position = UDim2.new(
+                startPos.X.Scale, startPos.X.Offset + d.X,
+                startPos.Y.Scale, startPos.Y.Offset + d.Y)
+        end
+    end)
+
+    ------------------------------------------------------------
+    -- เปิด/ปิดแผงจากหน้า Settings
+    ------------------------------------------------------------
+    Tog(TabSet, "quickPanel", {
+        Title = "Quick Buttons", Desc = "แผงปุ่มลัดลอยบนจอ (ลากที่แถบชื่อเพื่อย้าย)", Default = true,
+        Callback = function(v) panel.Visible = v end,
+    })
+end
+
+----------------------------------------------------------------
+-- FINISH
+----------------------------------------------------------------
+if Store.autoload then
+    task.spawn(function()
+        task.wait(1)
+        applyConfig()
+    end)
+end
+
+-- Unload เดียวใช้ทั้งปุ่ม Unload และตอนรันสคริปต์ซ้ำ
+-- (ตั้ง ZENOX_LOADED = nil ทำให้ลูป Troll / Macro / Quick หยุดและเคลียร์ตัวเอง)
+ENV.ZENOX_UNLOAD = function()
+    ENV.ZENOX_LOADED = nil
+    for k in pairs(S) do if type(S[k]) == "boolean" then S[k] = false end end
+    Fly.on = false
+    pcall(stopFly)
+    pcall(stopFree)
+    pcall(stopSpectate)
+    pcall(stopFloat)
+    AP.on = false
+    ESP.on = false
+    for plr in pairs(espObjs) do pcall(removeESP, plr) end
+    pcall(function() espFolder:Destroy() end)
+    pcall(function() HUD:Destroy() end)
+    for _, e in ipairs({fxCC, fxNV, fxBloom, fxBlur, fxRays}) do pcall(function() e:Destroy() end) end
+    pcall(setXray, false)
+    local h = getHum()
+    if h then h.WalkSpeed = Default.walk h.JumpPower = Default.jump h.HipHeight = 0 end
+    local r = getRoot()
+    if r then r.Anchored = false end
+    workspace.Gravity = Default.gravity
+    Lighting.Brightness = origLight.Brightness
+    Lighting.GlobalShadows = origLight.GlobalShadows
+    Lighting.Ambient = origLight.Ambient
+    Lighting.OutdoorAmbient = origLight.OutdoorAmbient
+    Lighting.FogEnd = origLight.FogEnd
+    Lighting.FogStart = origLight.FogStart
+    pcall(function() Window:Destroy() end)
+end
+
+notify("ZENOX HUB | BY TON", "v3 โหลดสำเร็จ! กด Right Shift เพื่อซ่อน/แสดงเมนู", "terminal")
